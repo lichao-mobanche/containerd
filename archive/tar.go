@@ -40,19 +40,29 @@ func Diff(ctx context.Context, a, b string) io.ReadCloser {
 	r, w := io.Pipe()
 
 	go func() {
-		var err error
-		cw := newChangeWriter(w, b)
-		if err = fs.Changes(ctx, a, b, cw.HandleChange); err != nil {
-			err = errors.Wrap(err, "failed to create diff tar stream")
-		} else {
-			err = cw.Close()
-		}
+		err := WriteDiff(ctx, w, a, b)
 		if err = w.CloseWithError(err); err != nil {
 			log.G(ctx).WithError(err).Debugf("closing tar pipe failed")
 		}
 	}()
 
 	return r
+}
+
+// WriteDiff writes a tar stream of the computed difference between the
+// provided directories.
+//
+// Produces a tar using OCI style file markers for deletions. Deleted
+// files will be prepended with the prefix ".wh.". This style is
+// based off AUFS whiteouts.
+// See https://github.com/opencontainers/image-spec/blob/master/layer.md
+func WriteDiff(ctx context.Context, w io.Writer, a, b string) error {
+	cw := newChangeWriter(w, b)
+	err := fs.Changes(ctx, a, b, cw.HandleChange)
+	if err != nil {
+		return errors.Wrap(err, "failed to create diff tar stream")
+	}
+	return cw.Close()
 }
 
 const (
@@ -260,18 +270,20 @@ func Apply(ctx context.Context, root string, r io.Reader) (int64, error) {
 }
 
 type changeWriter struct {
-	tw         *tar.Writer
-	source     string
-	whiteoutT  time.Time
-	inodeCache map[uint64]string
+	tw        *tar.Writer
+	source    string
+	whiteoutT time.Time
+	inodeSrc  map[uint64]string
+	inodeRefs map[uint64][]string
 }
 
 func newChangeWriter(w io.Writer, source string) *changeWriter {
 	return &changeWriter{
-		tw:         tar.NewWriter(w),
-		source:     source,
-		whiteoutT:  time.Now(),
-		inodeCache: map[uint64]string{},
+		tw:        tar.NewWriter(w),
+		source:    source,
+		whiteoutT: time.Now(),
+		inodeSrc:  map[uint64]string{},
+		inodeRefs: map[uint64][]string{},
 	}
 }
 
@@ -334,15 +346,28 @@ func (cw *changeWriter) HandleChange(k fs.ChangeKind, p string, f os.FileInfo, e
 			return errors.Wrap(err, "failed to set device headers")
 		}
 
-		linkname, err := fs.GetLinkSource(name, f, cw.inodeCache)
-		if err != nil {
-			return errors.Wrap(err, "failed to get hardlink")
-		}
-
-		if linkname != "" {
-			hdr.Typeflag = tar.TypeLink
-			hdr.Linkname = linkname
-			hdr.Size = 0
+		// additionalLinks stores file names which must be linked to
+		// this file when this file is added
+		var additionalLinks []string
+		inode, isHardlink := fs.GetLinkInfo(f)
+		if isHardlink {
+			// If the inode has a source, always link to it
+			if source, ok := cw.inodeSrc[inode]; ok {
+				hdr.Typeflag = tar.TypeLink
+				hdr.Linkname = source
+				hdr.Size = 0
+			} else {
+				if k == fs.ChangeKindUnmodified {
+					cw.inodeRefs[inode] = append(cw.inodeRefs[inode], name)
+					return nil
+				}
+				cw.inodeSrc[inode] = name
+				additionalLinks = cw.inodeRefs[inode]
+				delete(cw.inodeRefs, inode)
+			}
+		} else if k == fs.ChangeKindUnmodified {
+			// Nothing to write to diff
+			return nil
 		}
 
 		if capability, err := getxattr(source, "security.capability"); err != nil {
@@ -372,6 +397,19 @@ func (cw *changeWriter) HandleChange(k fs.ChangeKind, p string, f os.FileInfo, e
 			}
 			if n != hdr.Size {
 				return errors.New("short write copying file")
+			}
+		}
+
+		if additionalLinks != nil {
+			source = hdr.Name
+			for _, extra := range additionalLinks {
+				hdr.Name = extra
+				hdr.Typeflag = tar.TypeLink
+				hdr.Linkname = source
+				hdr.Size = 0
+				if err := cw.tw.WriteHeader(hdr); err != nil {
+					return errors.Wrap(err, "failed to write file header")
+				}
 			}
 		}
 	}

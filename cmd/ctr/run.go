@@ -4,20 +4,18 @@ import (
 	gocontext "context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"os"
-	"os/signal"
 	"runtime"
 
-	"golang.org/x/sys/unix"
-
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-
 	"github.com/Sirupsen/logrus"
+	"github.com/containerd/console"
+	containersapi "github.com/containerd/containerd/api/services/containers"
 	"github.com/containerd/containerd/api/services/execution"
-	rootfsapi "github.com/containerd/containerd/api/services/rootfs"
 	"github.com/containerd/containerd/images"
-	"github.com/crosbymichael/console"
+	"github.com/containerd/containerd/mount"
+	"github.com/containerd/containerd/snapshot"
+	digest "github.com/opencontainers/go-digest"
 	"github.com/opencontainers/image-spec/identity"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
@@ -38,19 +36,43 @@ var runCommand = cli.Command{
 			Usage: "allocate a TTY for the container",
 		},
 		cli.StringFlag{
+			Name:  "rootfs",
+			Usage: "path to rootfs",
+		},
+		cli.StringFlag{
 			Name:  "runtime",
 			Usage: "runtime name (linux, windows, vmware-linux)",
 			Value: "linux",
+		},
+		cli.StringFlag{
+			Name:  "runtime-config",
+			Usage: "set the OCI config file for the container",
 		},
 		cli.BoolFlag{
 			Name:  "readonly",
 			Usage: "set the containers filesystem as readonly",
 		},
+		cli.BoolFlag{
+			Name:  "net-host",
+			Usage: "enable host networking for the container",
+		},
+		cli.StringSliceFlag{
+			Name:  "mount",
+			Usage: "specify additional container mount (ex: type=bind,src=/tmp,dest=/host,options=rbind:ro)",
+		},
+		cli.BoolFlag{
+			Name:  "rm",
+			Usage: "remove the container after running",
+		},
+		cli.StringFlag{
+			Name:  "checkpoint",
+			Usage: "provide the checkpoint digest to restore the container",
+		},
 	},
 	Action: func(context *cli.Context) error {
 		var (
 			err         error
-			resp        *rootfsapi.MountResponse
+			mounts      []mount.Mount
 			imageConfig ocispec.Image
 
 			ctx = gocontext.Background()
@@ -59,7 +81,11 @@ var runCommand = cli.Command{
 		if id == "" {
 			return errors.New("container id must be provided")
 		}
-		containers, err := getExecutionService(context)
+		containers, err := getContainersService(context)
+		if err != nil {
+			return err
+		}
+		tasks, err := getTasksService(context)
 		if err != nil {
 			return err
 		}
@@ -68,84 +94,162 @@ var runCommand = cli.Command{
 			return err
 		}
 		defer os.RemoveAll(tmpDir)
-		events, err := containers.Events(ctx, &execution.EventsRequest{})
+		events, err := tasks.Events(ctx, &execution.EventsRequest{})
 		if err != nil {
 			return err
 		}
 
-		provider, err := getContentProvider(context)
+		content, err := getContentStore(context)
 		if err != nil {
 			return err
 		}
 
-		rootfsClient, err := getRootFSService(context)
+		snapshotter, err := getSnapshotter(context)
 		if err != nil {
 			return err
 		}
-
 		imageStore, err := getImageStore(context)
 		if err != nil {
 			return errors.Wrap(err, "failed resolving image store")
 		}
-
-		if runtime.GOOS != "windows" {
-			ref := context.Args().First()
-
-			image, err := imageStore.Get(ctx, ref)
-			if err != nil {
-				return errors.Wrapf(err, "could not resolve %q", ref)
-			}
-			// let's close out our db and tx so we don't hold the lock whilst running.
-
-			diffIDs, err := image.RootFS(ctx, provider)
-			if err != nil {
-				return err
-			}
-
-			if _, err := rootfsClient.Prepare(gocontext.TODO(), &rootfsapi.PrepareRequest{
-				Name:    id,
-				ChainID: identity.ChainID(diffIDs),
-			}); err != nil {
-				if grpc.Code(err) != codes.AlreadyExists {
-					return err
-				}
-			}
-
-			resp, err = rootfsClient.Mounts(gocontext.TODO(), &rootfsapi.MountsRequest{
-				Name: id,
-			})
-			if err != nil {
-				return err
-			}
-
-			ic, err := image.Config(ctx, provider)
-			if err != nil {
-				return err
-			}
-			switch ic.MediaType {
-			case ocispec.MediaTypeImageConfig, images.MediaTypeDockerSchema2Config:
-				r, err := provider.Reader(ctx, ic.Digest)
-				if err != nil {
-					return err
-				}
-				if err := json.NewDecoder(r).Decode(&imageConfig); err != nil {
-					r.Close()
-					return err
-				}
-				r.Close()
-			default:
-				return fmt.Errorf("unknown image config media type %s", ic.MediaType)
-			}
-		} else {
-			// TODO: get the image / rootfs through the API once windows has a snapshotter
-		}
-
-		create, err := newCreateRequest(context, &imageConfig.Config, id, tmpDir)
+		differ, err := getDiffService(context)
 		if err != nil {
 			return err
 		}
-		if resp != nil {
-			create.Rootfs = resp.Mounts
+		var (
+			checkpoint      *ocispec.Descriptor
+			checkpointIndex digest.Digest
+			ref             = context.Args().First()
+		)
+		if raw := context.String("checkpoint"); raw != "" {
+			if checkpointIndex, err = digest.Parse(raw); err != nil {
+				return err
+			}
+		}
+		var spec []byte
+		if checkpointIndex != "" {
+			var index ocispec.ImageIndex
+			r, err := content.Reader(ctx, checkpointIndex)
+			if err != nil {
+				return err
+			}
+			err = json.NewDecoder(r).Decode(&index)
+			r.Close()
+			if err != nil {
+				return err
+			}
+			var rw ocispec.Descriptor
+			for _, m := range index.Manifests {
+				switch m.MediaType {
+				case images.MediaTypeContainerd1Checkpoint:
+					fkingo := m.Descriptor
+					checkpoint = &fkingo
+				case images.MediaTypeContainerd1CheckpointConfig:
+					if r, err = content.Reader(ctx, m.Digest); err != nil {
+						return err
+					}
+					spec, err = ioutil.ReadAll(r)
+					r.Close()
+					if err != nil {
+						return err
+					}
+				case images.MediaTypeDockerSchema2Manifest:
+					// make sure we have the original image that was used during checkpoint
+					diffIDs, err := images.RootFS(ctx, content, m.Descriptor)
+					if err != nil {
+						return err
+					}
+					if _, err := snapshotter.Prepare(ctx, id, identity.ChainID(diffIDs).String()); err != nil {
+						if !snapshot.IsExist(err) {
+							return err
+						}
+					}
+				case ocispec.MediaTypeImageLayer:
+					rw = m.Descriptor
+				}
+			}
+			if mounts, err = snapshotter.Mounts(ctx, id); err != nil {
+				return err
+			}
+			if _, err := differ.Apply(ctx, rw, mounts); err != nil {
+				return err
+			}
+		} else {
+			if runtime.GOOS != "windows" && context.String("rootfs") == "" {
+				image, err := imageStore.Get(ctx, ref)
+				if err != nil {
+					return errors.Wrapf(err, "could not resolve %q", ref)
+				}
+				// let's close out our db and tx so we don't hold the lock whilst running.
+				diffIDs, err := image.RootFS(ctx, content)
+				if err != nil {
+					return err
+				}
+				if context.Bool("readonly") {
+					mounts, err = snapshotter.View(ctx, id, identity.ChainID(diffIDs).String())
+				} else {
+					mounts, err = snapshotter.Prepare(ctx, id, identity.ChainID(diffIDs).String())
+				}
+				defer func() {
+					if err != nil || context.Bool("rm") {
+						if err := snapshotter.Remove(ctx, id); err != nil {
+							logrus.WithError(err).Errorf("failed to remove snapshot %q", id)
+						}
+					}
+				}()
+				if err != nil {
+					if !snapshot.IsExist(err) {
+						return err
+					}
+					mounts, err = snapshotter.Mounts(ctx, id)
+					if err != nil {
+						return err
+					}
+				}
+				ic, err := image.Config(ctx, content)
+				if err != nil {
+					return err
+				}
+				switch ic.MediaType {
+				case ocispec.MediaTypeImageConfig, images.MediaTypeDockerSchema2Config:
+					r, err := content.Reader(ctx, ic.Digest)
+					if err != nil {
+						return err
+					}
+					if err := json.NewDecoder(r).Decode(&imageConfig); err != nil {
+						r.Close()
+						return err
+					}
+					r.Close()
+				default:
+					return fmt.Errorf("unknown image config media type %s", ic.MediaType)
+				}
+			} else {
+				// TODO: get the image / rootfs through the API once windows has a snapshotter
+			}
+		}
+		if err != nil {
+			return err
+		}
+		if len(spec) == 0 {
+			if spec, err = newContainerSpec(context, &imageConfig.Config, ref); err != nil {
+				return err
+			}
+		}
+
+		createContainer, err := newCreateContainerRequest(context, id, id, spec)
+		if err != nil {
+			return err
+		}
+
+		_, err = containers.Create(ctx, createContainer)
+		if err != nil {
+			return err
+		}
+
+		create, err := newCreateTaskRequest(context, id, tmpDir, checkpoint, mounts)
+		if err != nil {
+			return err
 		}
 		var con console.Console
 		if create.Terminal {
@@ -155,76 +259,50 @@ var runCommand = cli.Command{
 				return err
 			}
 		}
-
 		fwg, err := prepareStdio(create.Stdin, create.Stdout, create.Stderr, create.Terminal)
 		if err != nil {
 			return err
 		}
-		response, err := containers.Create(ctx, create)
+		response, err := tasks.Create(ctx, create)
 		if err != nil {
 			return err
 		}
+		pid := response.Pid
 		if create.Terminal {
-			if err := handleConsoleResize(ctx, containers, response.ID, response.Pid, con); err != nil {
+			if err := handleConsoleResize(ctx, tasks, id, pid, con); err != nil {
 				logrus.WithError(err).Error("console resize")
 			}
+		} else {
+			sigc := forwardAllSignals(tasks, id)
+			defer stopCatch(sigc)
 		}
-		if _, err := containers.Start(ctx, &execution.StartRequest{
-			ID: response.ID,
-		}); err != nil {
-			return err
+		if checkpoint == nil {
+			if _, err := tasks.Start(ctx, &execution.StartRequest{
+				ContainerID: id,
+			}); err != nil {
+				return err
+			}
 		}
 		// Ensure we read all io only if container started successfully.
 		defer fwg.Wait()
 
-		status, err := waitContainer(events, response.ID, response.Pid)
+		status, err := waitContainer(events, id, pid)
 		if err != nil {
 			return err
 		}
-		if _, err := containers.Delete(ctx, &execution.DeleteRequest{
-			ID: response.ID,
+		if _, err := tasks.Delete(ctx, &execution.DeleteRequest{
+			ContainerID: response.ContainerID,
 		}); err != nil {
 			return err
+		}
+		if context.Bool("rm") {
+			if _, err := containers.Delete(ctx, &containersapi.DeleteContainerRequest{ID: id}); err != nil {
+				return err
+			}
 		}
 		if status != 0 {
 			return cli.NewExitError("", int(status))
 		}
 		return nil
 	},
-}
-
-func handleConsoleResize(ctx gocontext.Context, service execution.ContainerServiceClient, id string, pid uint32, con console.Console) error {
-	// do an initial resize of the console
-	size, err := con.Size()
-	if err != nil {
-		return err
-	}
-	if _, err := service.Pty(ctx, &execution.PtyRequest{
-		ID:     id,
-		Pid:    pid,
-		Width:  uint32(size.Width),
-		Height: uint32(size.Height),
-	}); err != nil {
-		return err
-	}
-	s := make(chan os.Signal, 16)
-	signal.Notify(s, unix.SIGWINCH)
-	go func() {
-		for range s {
-			size, err := con.Size()
-			if err != nil {
-				logrus.WithError(err).Error("get pty size")
-				continue
-			}
-			if _, err := service.Pty(ctx, &execution.PtyRequest{
-				ID:     id,
-				Pid:    pid,
-				Width:  uint32(size.Width),
-				Height: uint32(size.Height),
-			}); err != nil {
-				logrus.WithError(err).Error("resize pty")
-			}
-		}
-	}()
-	return nil
 }

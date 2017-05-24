@@ -26,6 +26,9 @@
 		ExitRequest
 		KillRequest
 		CloseStdinRequest
+		ProcessesRequest
+		ProcessesResponse
+		CheckpointRequest
 */
 package shim
 
@@ -36,12 +39,17 @@ import google_protobuf "github.com/gogo/protobuf/types"
 import google_protobuf1 "github.com/golang/protobuf/ptypes/empty"
 import _ "github.com/gogo/protobuf/gogoproto"
 import containerd_v1_types "github.com/containerd/containerd/api/types/mount"
-import containerd_v1_types1 "github.com/containerd/containerd/api/types/container"
+import containerd_v1_types1 "github.com/containerd/containerd/api/types/task"
+import _ "github.com/gogo/protobuf/types"
+
+import time "time"
 
 import (
 	context "golang.org/x/net/context"
 	grpc "google.golang.org/grpc"
 )
+
+import github_com_gogo_protobuf_types "github.com/gogo/protobuf/types"
 
 import strings "strings"
 import reflect "reflect"
@@ -52,6 +60,7 @@ import io "io"
 var _ = proto.Marshal
 var _ = fmt.Errorf
 var _ = math.Inf
+var _ = time.Kitchen
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the proto package it is being compiled against.
@@ -60,15 +69,17 @@ var _ = math.Inf
 const _ = proto.GoGoProtoPackageIsVersion2 // please upgrade the proto package
 
 type CreateRequest struct {
-	ID       string                       `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Bundle   string                       `protobuf:"bytes,2,opt,name=bundle,proto3" json:"bundle,omitempty"`
-	Runtime  string                       `protobuf:"bytes,3,opt,name=runtime,proto3" json:"runtime,omitempty"`
-	NoPivot  bool                         `protobuf:"varint,4,opt,name=no_pivot,json=noPivot,proto3" json:"no_pivot,omitempty"`
-	Terminal bool                         `protobuf:"varint,5,opt,name=terminal,proto3" json:"terminal,omitempty"`
-	Stdin    string                       `protobuf:"bytes,6,opt,name=stdin,proto3" json:"stdin,omitempty"`
-	Stdout   string                       `protobuf:"bytes,7,opt,name=stdout,proto3" json:"stdout,omitempty"`
-	Stderr   string                       `protobuf:"bytes,8,opt,name=stderr,proto3" json:"stderr,omitempty"`
-	Rootfs   []*containerd_v1_types.Mount `protobuf:"bytes,9,rep,name=rootfs" json:"rootfs,omitempty"`
+	ID               string                       `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Bundle           string                       `protobuf:"bytes,2,opt,name=bundle,proto3" json:"bundle,omitempty"`
+	Runtime          string                       `protobuf:"bytes,3,opt,name=runtime,proto3" json:"runtime,omitempty"`
+	NoPivot          bool                         `protobuf:"varint,4,opt,name=no_pivot,json=noPivot,proto3" json:"no_pivot,omitempty"`
+	Terminal         bool                         `protobuf:"varint,5,opt,name=terminal,proto3" json:"terminal,omitempty"`
+	Stdin            string                       `protobuf:"bytes,6,opt,name=stdin,proto3" json:"stdin,omitempty"`
+	Stdout           string                       `protobuf:"bytes,7,opt,name=stdout,proto3" json:"stdout,omitempty"`
+	Stderr           string                       `protobuf:"bytes,8,opt,name=stderr,proto3" json:"stderr,omitempty"`
+	Rootfs           []*containerd_v1_types.Mount `protobuf:"bytes,9,rep,name=rootfs" json:"rootfs,omitempty"`
+	Checkpoint       string                       `protobuf:"bytes,10,opt,name=checkpoint,proto3" json:"checkpoint,omitempty"`
+	ParentCheckpoint string                       `protobuf:"bytes,11,opt,name=parent_checkpoint,json=parentCheckpoint,proto3" json:"parent_checkpoint,omitempty"`
 }
 
 func (m *CreateRequest) Reset()                    { *m = CreateRequest{} }
@@ -99,7 +110,8 @@ func (*DeleteRequest) ProtoMessage()               {}
 func (*DeleteRequest) Descriptor() ([]byte, []int) { return fileDescriptorShim, []int{3} }
 
 type DeleteResponse struct {
-	ExitStatus uint32 `protobuf:"varint,1,opt,name=exit_status,json=exitStatus,proto3" json:"exit_status,omitempty"`
+	ExitStatus uint32    `protobuf:"varint,1,opt,name=exit_status,json=exitStatus,proto3" json:"exit_status,omitempty"`
+	ExitedAt   time.Time `protobuf:"bytes,2,opt,name=exited_at,json=exitedAt,stdtime" json:"exited_at"`
 }
 
 func (m *DeleteResponse) Reset()                    { *m = DeleteResponse{} }
@@ -211,6 +223,36 @@ func (m *CloseStdinRequest) Reset()                    { *m = CloseStdinRequest{
 func (*CloseStdinRequest) ProtoMessage()               {}
 func (*CloseStdinRequest) Descriptor() ([]byte, []int) { return fileDescriptorShim, []int{16} }
 
+type ProcessesRequest struct {
+	ID string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+}
+
+func (m *ProcessesRequest) Reset()                    { *m = ProcessesRequest{} }
+func (*ProcessesRequest) ProtoMessage()               {}
+func (*ProcessesRequest) Descriptor() ([]byte, []int) { return fileDescriptorShim, []int{17} }
+
+type ProcessesResponse struct {
+	Processes []*containerd_v1_types1.Process `protobuf:"bytes,1,rep,name=processes" json:"processes,omitempty"`
+}
+
+func (m *ProcessesResponse) Reset()                    { *m = ProcessesResponse{} }
+func (*ProcessesResponse) ProtoMessage()               {}
+func (*ProcessesResponse) Descriptor() ([]byte, []int) { return fileDescriptorShim, []int{18} }
+
+type CheckpointRequest struct {
+	Exit             bool     `protobuf:"varint,1,opt,name=exit,proto3" json:"exit,omitempty"`
+	AllowTcp         bool     `protobuf:"varint,2,opt,name=allow_tcp,json=allowTcp,proto3" json:"allow_tcp,omitempty"`
+	AllowUnixSockets bool     `protobuf:"varint,3,opt,name=allow_unix_sockets,json=allowUnixSockets,proto3" json:"allow_unix_sockets,omitempty"`
+	AllowTerminal    bool     `protobuf:"varint,4,opt,name=allow_terminal,json=allowTerminal,proto3" json:"allow_terminal,omitempty"`
+	FileLocks        bool     `protobuf:"varint,5,opt,name=file_locks,json=fileLocks,proto3" json:"file_locks,omitempty"`
+	EmptyNamespaces  []string `protobuf:"bytes,6,rep,name=empty_namespaces,json=emptyNamespaces" json:"empty_namespaces,omitempty"`
+	Image            string   `protobuf:"bytes,7,opt,name=image,proto3" json:"image,omitempty"`
+}
+
+func (m *CheckpointRequest) Reset()                    { *m = CheckpointRequest{} }
+func (*CheckpointRequest) ProtoMessage()               {}
+func (*CheckpointRequest) Descriptor() ([]byte, []int) { return fileDescriptorShim, []int{19} }
+
 func init() {
 	proto.RegisterType((*CreateRequest)(nil), "containerd.v1.services.shim.CreateRequest")
 	proto.RegisterType((*CreateResponse)(nil), "containerd.v1.services.shim.CreateResponse")
@@ -229,6 +271,9 @@ func init() {
 	proto.RegisterType((*ExitRequest)(nil), "containerd.v1.services.shim.ExitRequest")
 	proto.RegisterType((*KillRequest)(nil), "containerd.v1.services.shim.KillRequest")
 	proto.RegisterType((*CloseStdinRequest)(nil), "containerd.v1.services.shim.CloseStdinRequest")
+	proto.RegisterType((*ProcessesRequest)(nil), "containerd.v1.services.shim.ProcessesRequest")
+	proto.RegisterType((*ProcessesResponse)(nil), "containerd.v1.services.shim.ProcessesResponse")
+	proto.RegisterType((*CheckpointRequest)(nil), "containerd.v1.services.shim.CheckpointRequest")
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -242,34 +287,19 @@ const _ = grpc.SupportPackageIsVersion4
 // Client API for Shim service
 
 type ShimClient interface {
-	// container rpcs
-	// Create will create the container within the runtime.  At this point in time the container
-	// should be created along with its resources without its user defined process being started
 	Create(ctx context.Context, in *CreateRequest, opts ...grpc.CallOption) (*CreateResponse, error)
-	// Start executes the user defined process of the container
 	Start(ctx context.Context, in *StartRequest, opts ...grpc.CallOption) (*google_protobuf1.Empty, error)
-	// Delete removes the container and its resources from the runtime after it has been stopped
 	Delete(ctx context.Context, in *DeleteRequest, opts ...grpc.CallOption) (*DeleteResponse, error)
-	// State returns the state of the container that the shim owns and its additional processes
 	State(ctx context.Context, in *StateRequest, opts ...grpc.CallOption) (*StateResponse, error)
-	// Pause pauses the container
+	Processes(ctx context.Context, in *ProcessesRequest, opts ...grpc.CallOption) (*ProcessesResponse, error)
 	Pause(ctx context.Context, in *PauseRequest, opts ...grpc.CallOption) (*google_protobuf1.Empty, error)
-	// Resume resumes a paused container back into a running state
 	Resume(ctx context.Context, in *ResumeRequest, opts ...grpc.CallOption) (*google_protobuf1.Empty, error)
-	// shim rpcs
-	// Exit causes the shim to reap all remaining processes and exit
+	Checkpoint(ctx context.Context, in *CheckpointRequest, opts ...grpc.CallOption) (*google_protobuf1.Empty, error)
 	Exit(ctx context.Context, in *ExitRequest, opts ...grpc.CallOption) (*google_protobuf1.Empty, error)
-	// Events returns all events for the container owned by the shim including
-	// additional processes being added and removed and state changes
 	Events(ctx context.Context, in *EventsRequest, opts ...grpc.CallOption) (Shim_EventsClient, error)
-	// process rpcs
-	// Kill kills a container process owned by the shim
 	Kill(ctx context.Context, in *KillRequest, opts ...grpc.CallOption) (*google_protobuf1.Empty, error)
-	// Exec adds and additional process to the container
 	Exec(ctx context.Context, in *ExecRequest, opts ...grpc.CallOption) (*ExecResponse, error)
-	// Pty handles resizing the pty/console for a container
 	Pty(ctx context.Context, in *PtyRequest, opts ...grpc.CallOption) (*google_protobuf1.Empty, error)
-	// CloseStdin closes the STDIN for a process that is owned by the shim
 	CloseStdin(ctx context.Context, in *CloseStdinRequest, opts ...grpc.CallOption) (*google_protobuf1.Empty, error)
 }
 
@@ -317,6 +347,15 @@ func (c *shimClient) State(ctx context.Context, in *StateRequest, opts ...grpc.C
 	return out, nil
 }
 
+func (c *shimClient) Processes(ctx context.Context, in *ProcessesRequest, opts ...grpc.CallOption) (*ProcessesResponse, error) {
+	out := new(ProcessesResponse)
+	err := grpc.Invoke(ctx, "/containerd.v1.services.shim.Shim/Processes", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *shimClient) Pause(ctx context.Context, in *PauseRequest, opts ...grpc.CallOption) (*google_protobuf1.Empty, error) {
 	out := new(google_protobuf1.Empty)
 	err := grpc.Invoke(ctx, "/containerd.v1.services.shim.Shim/Pause", in, out, c.cc, opts...)
@@ -329,6 +368,15 @@ func (c *shimClient) Pause(ctx context.Context, in *PauseRequest, opts ...grpc.C
 func (c *shimClient) Resume(ctx context.Context, in *ResumeRequest, opts ...grpc.CallOption) (*google_protobuf1.Empty, error) {
 	out := new(google_protobuf1.Empty)
 	err := grpc.Invoke(ctx, "/containerd.v1.services.shim.Shim/Resume", in, out, c.cc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *shimClient) Checkpoint(ctx context.Context, in *CheckpointRequest, opts ...grpc.CallOption) (*google_protobuf1.Empty, error) {
+	out := new(google_protobuf1.Empty)
+	err := grpc.Invoke(ctx, "/containerd.v1.services.shim.Shim/Checkpoint", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -415,34 +463,19 @@ func (c *shimClient) CloseStdin(ctx context.Context, in *CloseStdinRequest, opts
 // Server API for Shim service
 
 type ShimServer interface {
-	// container rpcs
-	// Create will create the container within the runtime.  At this point in time the container
-	// should be created along with its resources without its user defined process being started
 	Create(context.Context, *CreateRequest) (*CreateResponse, error)
-	// Start executes the user defined process of the container
 	Start(context.Context, *StartRequest) (*google_protobuf1.Empty, error)
-	// Delete removes the container and its resources from the runtime after it has been stopped
 	Delete(context.Context, *DeleteRequest) (*DeleteResponse, error)
-	// State returns the state of the container that the shim owns and its additional processes
 	State(context.Context, *StateRequest) (*StateResponse, error)
-	// Pause pauses the container
+	Processes(context.Context, *ProcessesRequest) (*ProcessesResponse, error)
 	Pause(context.Context, *PauseRequest) (*google_protobuf1.Empty, error)
-	// Resume resumes a paused container back into a running state
 	Resume(context.Context, *ResumeRequest) (*google_protobuf1.Empty, error)
-	// shim rpcs
-	// Exit causes the shim to reap all remaining processes and exit
+	Checkpoint(context.Context, *CheckpointRequest) (*google_protobuf1.Empty, error)
 	Exit(context.Context, *ExitRequest) (*google_protobuf1.Empty, error)
-	// Events returns all events for the container owned by the shim including
-	// additional processes being added and removed and state changes
 	Events(*EventsRequest, Shim_EventsServer) error
-	// process rpcs
-	// Kill kills a container process owned by the shim
 	Kill(context.Context, *KillRequest) (*google_protobuf1.Empty, error)
-	// Exec adds and additional process to the container
 	Exec(context.Context, *ExecRequest) (*ExecResponse, error)
-	// Pty handles resizing the pty/console for a container
 	Pty(context.Context, *PtyRequest) (*google_protobuf1.Empty, error)
-	// CloseStdin closes the STDIN for a process that is owned by the shim
 	CloseStdin(context.Context, *CloseStdinRequest) (*google_protobuf1.Empty, error)
 }
 
@@ -522,6 +555,24 @@ func _Shim_State_Handler(srv interface{}, ctx context.Context, dec func(interfac
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Shim_Processes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ProcessesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ShimServer).Processes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/containerd.v1.services.shim.Shim/Processes",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ShimServer).Processes(ctx, req.(*ProcessesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Shim_Pause_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PauseRequest)
 	if err := dec(in); err != nil {
@@ -554,6 +605,24 @@ func _Shim_Resume_Handler(srv interface{}, ctx context.Context, dec func(interfa
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ShimServer).Resume(ctx, req.(*ResumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Shim_Checkpoint_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckpointRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ShimServer).Checkpoint(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/containerd.v1.services.shim.Shim/Checkpoint",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ShimServer).Checkpoint(ctx, req.(*CheckpointRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -690,12 +759,20 @@ var _Shim_serviceDesc = grpc.ServiceDesc{
 			Handler:    _Shim_State_Handler,
 		},
 		{
+			MethodName: "Processes",
+			Handler:    _Shim_Processes_Handler,
+		},
+		{
 			MethodName: "Pause",
 			Handler:    _Shim_Pause_Handler,
 		},
 		{
 			MethodName: "Resume",
 			Handler:    _Shim_Resume_Handler,
+		},
+		{
+			MethodName: "Checkpoint",
+			Handler:    _Shim_Checkpoint_Handler,
 		},
 		{
 			MethodName: "Exit",
@@ -811,6 +888,18 @@ func (m *CreateRequest) MarshalTo(dAtA []byte) (int, error) {
 			i += n
 		}
 	}
+	if len(m.Checkpoint) > 0 {
+		dAtA[i] = 0x52
+		i++
+		i = encodeVarintShim(dAtA, i, uint64(len(m.Checkpoint)))
+		i += copy(dAtA[i:], m.Checkpoint)
+	}
+	if len(m.ParentCheckpoint) > 0 {
+		dAtA[i] = 0x5a
+		i++
+		i = encodeVarintShim(dAtA, i, uint64(len(m.ParentCheckpoint)))
+		i += copy(dAtA[i:], m.ParentCheckpoint)
+	}
 	return i, nil
 }
 
@@ -898,6 +987,14 @@ func (m *DeleteResponse) MarshalTo(dAtA []byte) (int, error) {
 		i++
 		i = encodeVarintShim(dAtA, i, uint64(m.ExitStatus))
 	}
+	dAtA[i] = 0x12
+	i++
+	i = encodeVarintShim(dAtA, i, uint64(github_com_gogo_protobuf_types.SizeOfStdTime(m.ExitedAt)))
+	n1, err := github_com_gogo_protobuf_types.StdTimeMarshalTo(m.ExitedAt, dAtA[i:])
+	if err != nil {
+		return 0, err
+	}
+	i += n1
 	return i, nil
 }
 
@@ -948,11 +1045,11 @@ func (m *ExecRequest) MarshalTo(dAtA []byte) (int, error) {
 		dAtA[i] = 0x2a
 		i++
 		i = encodeVarintShim(dAtA, i, uint64(m.Spec.Size()))
-		n1, err := m.Spec.MarshalTo(dAtA[i:])
+		n2, err := m.Spec.MarshalTo(dAtA[i:])
 		if err != nil {
 			return 0, err
 		}
-		i += n1
+		i += n2
 	}
 	return i, nil
 }
@@ -1250,6 +1347,149 @@ func (m *CloseStdinRequest) MarshalTo(dAtA []byte) (int, error) {
 	return i, nil
 }
 
+func (m *ProcessesRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *ProcessesRequest) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.ID) > 0 {
+		dAtA[i] = 0xa
+		i++
+		i = encodeVarintShim(dAtA, i, uint64(len(m.ID)))
+		i += copy(dAtA[i:], m.ID)
+	}
+	return i, nil
+}
+
+func (m *ProcessesResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *ProcessesResponse) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if len(m.Processes) > 0 {
+		for _, msg := range m.Processes {
+			dAtA[i] = 0xa
+			i++
+			i = encodeVarintShim(dAtA, i, uint64(msg.Size()))
+			n, err := msg.MarshalTo(dAtA[i:])
+			if err != nil {
+				return 0, err
+			}
+			i += n
+		}
+	}
+	return i, nil
+}
+
+func (m *CheckpointRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalTo(dAtA)
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *CheckpointRequest) MarshalTo(dAtA []byte) (int, error) {
+	var i int
+	_ = i
+	var l int
+	_ = l
+	if m.Exit {
+		dAtA[i] = 0x8
+		i++
+		if m.Exit {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i++
+	}
+	if m.AllowTcp {
+		dAtA[i] = 0x10
+		i++
+		if m.AllowTcp {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i++
+	}
+	if m.AllowUnixSockets {
+		dAtA[i] = 0x18
+		i++
+		if m.AllowUnixSockets {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i++
+	}
+	if m.AllowTerminal {
+		dAtA[i] = 0x20
+		i++
+		if m.AllowTerminal {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i++
+	}
+	if m.FileLocks {
+		dAtA[i] = 0x28
+		i++
+		if m.FileLocks {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i++
+	}
+	if len(m.EmptyNamespaces) > 0 {
+		for _, s := range m.EmptyNamespaces {
+			dAtA[i] = 0x32
+			i++
+			l = len(s)
+			for l >= 1<<7 {
+				dAtA[i] = uint8(uint64(l)&0x7f | 0x80)
+				l >>= 7
+				i++
+			}
+			dAtA[i] = uint8(l)
+			i++
+			i += copy(dAtA[i:], s)
+		}
+	}
+	if len(m.Image) > 0 {
+		dAtA[i] = 0x3a
+		i++
+		i = encodeVarintShim(dAtA, i, uint64(len(m.Image)))
+		i += copy(dAtA[i:], m.Image)
+	}
+	return i, nil
+}
+
 func encodeFixed64Shim(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	dAtA[offset+1] = uint8(v >> 8)
@@ -1316,6 +1556,14 @@ func (m *CreateRequest) Size() (n int) {
 			n += 1 + l + sovShim(uint64(l))
 		}
 	}
+	l = len(m.Checkpoint)
+	if l > 0 {
+		n += 1 + l + sovShim(uint64(l))
+	}
+	l = len(m.ParentCheckpoint)
+	if l > 0 {
+		n += 1 + l + sovShim(uint64(l))
+	}
 	return n
 }
 
@@ -1349,6 +1597,8 @@ func (m *DeleteResponse) Size() (n int) {
 	if m.ExitStatus != 0 {
 		n += 1 + sovShim(uint64(m.ExitStatus))
 	}
+	l = github_com_gogo_protobuf_types.SizeOfStdTime(m.ExitedAt)
+	n += 1 + l + sovShim(uint64(l))
 	return n
 }
 
@@ -1497,6 +1747,59 @@ func (m *CloseStdinRequest) Size() (n int) {
 	return n
 }
 
+func (m *ProcessesRequest) Size() (n int) {
+	var l int
+	_ = l
+	l = len(m.ID)
+	if l > 0 {
+		n += 1 + l + sovShim(uint64(l))
+	}
+	return n
+}
+
+func (m *ProcessesResponse) Size() (n int) {
+	var l int
+	_ = l
+	if len(m.Processes) > 0 {
+		for _, e := range m.Processes {
+			l = e.Size()
+			n += 1 + l + sovShim(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *CheckpointRequest) Size() (n int) {
+	var l int
+	_ = l
+	if m.Exit {
+		n += 2
+	}
+	if m.AllowTcp {
+		n += 2
+	}
+	if m.AllowUnixSockets {
+		n += 2
+	}
+	if m.AllowTerminal {
+		n += 2
+	}
+	if m.FileLocks {
+		n += 2
+	}
+	if len(m.EmptyNamespaces) > 0 {
+		for _, s := range m.EmptyNamespaces {
+			l = len(s)
+			n += 1 + l + sovShim(uint64(l))
+		}
+	}
+	l = len(m.Image)
+	if l > 0 {
+		n += 1 + l + sovShim(uint64(l))
+	}
+	return n
+}
+
 func sovShim(x uint64) (n int) {
 	for {
 		n++
@@ -1524,6 +1827,8 @@ func (this *CreateRequest) String() string {
 		`Stdout:` + fmt.Sprintf("%v", this.Stdout) + `,`,
 		`Stderr:` + fmt.Sprintf("%v", this.Stderr) + `,`,
 		`Rootfs:` + strings.Replace(fmt.Sprintf("%v", this.Rootfs), "Mount", "containerd_v1_types.Mount", 1) + `,`,
+		`Checkpoint:` + fmt.Sprintf("%v", this.Checkpoint) + `,`,
+		`ParentCheckpoint:` + fmt.Sprintf("%v", this.ParentCheckpoint) + `,`,
 		`}`,
 	}, "")
 	return s
@@ -1563,6 +1868,7 @@ func (this *DeleteResponse) String() string {
 	}
 	s := strings.Join([]string{`&DeleteResponse{`,
 		`ExitStatus:` + fmt.Sprintf("%v", this.ExitStatus) + `,`,
+		`ExitedAt:` + strings.Replace(strings.Replace(this.ExitedAt.String(), "Timestamp", "google_protobuf3.Timestamp", 1), `&`, ``, 1) + `,`,
 		`}`,
 	}, "")
 	return s
@@ -1692,6 +1998,42 @@ func (this *CloseStdinRequest) String() string {
 	}
 	s := strings.Join([]string{`&CloseStdinRequest{`,
 		`Pid:` + fmt.Sprintf("%v", this.Pid) + `,`,
+		`}`,
+	}, "")
+	return s
+}
+func (this *ProcessesRequest) String() string {
+	if this == nil {
+		return "nil"
+	}
+	s := strings.Join([]string{`&ProcessesRequest{`,
+		`ID:` + fmt.Sprintf("%v", this.ID) + `,`,
+		`}`,
+	}, "")
+	return s
+}
+func (this *ProcessesResponse) String() string {
+	if this == nil {
+		return "nil"
+	}
+	s := strings.Join([]string{`&ProcessesResponse{`,
+		`Processes:` + strings.Replace(fmt.Sprintf("%v", this.Processes), "Process", "containerd_v1_types1.Process", 1) + `,`,
+		`}`,
+	}, "")
+	return s
+}
+func (this *CheckpointRequest) String() string {
+	if this == nil {
+		return "nil"
+	}
+	s := strings.Join([]string{`&CheckpointRequest{`,
+		`Exit:` + fmt.Sprintf("%v", this.Exit) + `,`,
+		`AllowTcp:` + fmt.Sprintf("%v", this.AllowTcp) + `,`,
+		`AllowUnixSockets:` + fmt.Sprintf("%v", this.AllowUnixSockets) + `,`,
+		`AllowTerminal:` + fmt.Sprintf("%v", this.AllowTerminal) + `,`,
+		`FileLocks:` + fmt.Sprintf("%v", this.FileLocks) + `,`,
+		`EmptyNamespaces:` + fmt.Sprintf("%v", this.EmptyNamespaces) + `,`,
+		`Image:` + fmt.Sprintf("%v", this.Image) + `,`,
 		`}`,
 	}, "")
 	return s
@@ -1978,6 +2320,64 @@ func (m *CreateRequest) Unmarshal(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 10:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Checkpoint", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowShim
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthShim
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Checkpoint = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 11:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ParentCheckpoint", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowShim
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthShim
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ParentCheckpoint = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipShim(dAtA[iNdEx:])
@@ -2235,6 +2635,36 @@ func (m *DeleteResponse) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ExitedAt", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowShim
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthShim
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := github_com_gogo_protobuf_types.StdTimeUnmarshal(&m.ExitedAt, dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipShim(dAtA[iNdEx:])
@@ -3343,6 +3773,374 @@ func (m *CloseStdinRequest) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
+func (m *ProcessesRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowShim
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: ProcessesRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: ProcessesRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ID", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowShim
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthShim
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ID = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipShim(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthShim
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *ProcessesResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowShim
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: ProcessesResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: ProcessesResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Processes", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowShim
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthShim
+			}
+			postIndex := iNdEx + msglen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Processes = append(m.Processes, &containerd_v1_types1.Process{})
+			if err := m.Processes[len(m.Processes)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipShim(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthShim
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *CheckpointRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowShim
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= (uint64(b) & 0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: CheckpointRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: CheckpointRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Exit", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowShim
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.Exit = bool(v != 0)
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field AllowTcp", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowShim
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.AllowTcp = bool(v != 0)
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field AllowUnixSockets", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowShim
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.AllowUnixSockets = bool(v != 0)
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field AllowTerminal", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowShim
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.AllowTerminal = bool(v != 0)
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field FileLocks", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowShim
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= (int(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.FileLocks = bool(v != 0)
+		case 6:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EmptyNamespaces", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowShim
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthShim
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.EmptyNamespaces = append(m.EmptyNamespaces, string(dAtA[iNdEx:postIndex]))
+			iNdEx = postIndex
+		case 7:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Image", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowShim
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= (uint64(b) & 0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthShim
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Image = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipShim(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if skippy < 0 {
+				return ErrInvalidLengthShim
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
 func skipShim(dAtA []byte) (n int, err error) {
 	l := len(dAtA)
 	iNdEx := 0
@@ -3453,60 +4251,76 @@ func init() {
 }
 
 var fileDescriptorShim = []byte{
-	// 871 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x94, 0x55, 0xcd, 0x6e, 0xdb, 0x46,
-	0x10, 0x0e, 0x25, 0x99, 0x96, 0x47, 0xa1, 0xd3, 0x2e, 0x0c, 0x83, 0xa1, 0x0b, 0xc5, 0x25, 0x50,
-	0x54, 0x49, 0x01, 0xaa, 0x51, 0x6e, 0x45, 0x7b, 0x68, 0x62, 0x17, 0x4d, 0x9b, 0x02, 0xc2, 0xba,
-	0xb7, 0x02, 0x0d, 0x68, 0x71, 0x2d, 0x2d, 0x40, 0x72, 0x59, 0xee, 0xd2, 0x8d, 0x6e, 0x3d, 0xf7,
-	0x0d, 0xfa, 0x3a, 0x3d, 0xe5, 0xd8, 0x63, 0x4f, 0x45, 0xa3, 0x77, 0xe8, 0xbd, 0xd8, 0x1f, 0x92,
-	0x92, 0x6d, 0x8a, 0xca, 0x45, 0x98, 0x19, 0xce, 0xce, 0x7e, 0xf3, 0xcd, 0x37, 0x2b, 0xf8, 0x6a,
-	0x4e, 0xc5, 0xa2, 0xb8, 0x0c, 0x66, 0x2c, 0x19, 0xcf, 0x58, 0x2a, 0x42, 0x9a, 0x92, 0x3c, 0x5a,
-	0x37, 0xc3, 0x8c, 0x8e, 0x39, 0xc9, 0xaf, 0xe9, 0x8c, 0xf0, 0x31, 0x5f, 0xd0, 0x44, 0xfd, 0x04,
-	0x59, 0xce, 0x04, 0x43, 0x27, 0x75, 0x62, 0x70, 0xfd, 0x34, 0x28, 0xf3, 0x02, 0x99, 0xe2, 0x3d,
-	0x9c, 0x33, 0x36, 0x8f, 0xc9, 0x58, 0xa5, 0x5e, 0x16, 0x57, 0xe3, 0x30, 0x5d, 0xea, 0x73, 0xde,
-	0xc9, 0xcd, 0x4f, 0x24, 0xc9, 0x44, 0xf9, 0xf1, 0x68, 0xce, 0xe6, 0x4c, 0x99, 0x63, 0x69, 0x99,
-	0xe8, 0x97, 0x3b, 0x21, 0x15, 0xcb, 0x8c, 0xf0, 0x71, 0xc2, 0x8a, 0x54, 0xe8, 0x5f, 0x73, 0xfa,
-	0xec, 0x3d, 0x4e, 0x57, 0xc1, 0xda, 0xd2, 0x55, 0xfc, 0xdf, 0x3b, 0xe0, 0xbc, 0xc8, 0x49, 0x28,
-	0x08, 0x26, 0xbf, 0x14, 0x84, 0x0b, 0x74, 0x0c, 0x1d, 0x1a, 0xb9, 0xd6, 0xa9, 0x35, 0x3a, 0x78,
-	0x6e, 0xaf, 0xfe, 0x79, 0xd4, 0x79, 0x79, 0x86, 0x3b, 0x34, 0x42, 0xc7, 0x60, 0x5f, 0x16, 0x69,
-	0x14, 0x13, 0xb7, 0x23, 0xbf, 0x61, 0xe3, 0x21, 0x17, 0xf6, 0xf3, 0x22, 0x15, 0x34, 0x21, 0x6e,
-	0x57, 0x7d, 0x28, 0x5d, 0xf4, 0x10, 0xfa, 0x29, 0x7b, 0x9d, 0xd1, 0x6b, 0x26, 0xdc, 0xde, 0xa9,
-	0x35, 0xea, 0xe3, 0xfd, 0x94, 0x4d, 0xa5, 0x8b, 0x3c, 0xe8, 0x0b, 0x92, 0x27, 0x34, 0x0d, 0x63,
-	0x77, 0x4f, 0x7d, 0xaa, 0x7c, 0x74, 0x04, 0x7b, 0x5c, 0x44, 0x34, 0x75, 0x6d, 0x55, 0x4e, 0x3b,
-	0xf2, 0x7a, 0x2e, 0x22, 0x56, 0x08, 0x77, 0x5f, 0x5f, 0xaf, 0x3d, 0x13, 0x27, 0x79, 0xee, 0xf6,
-	0xab, 0x38, 0xc9, 0x73, 0x34, 0x01, 0x3b, 0x67, 0x4c, 0x5c, 0x71, 0xf7, 0xe0, 0xb4, 0x3b, 0x1a,
-	0x4c, 0xbc, 0x60, 0x73, 0xb0, 0x8a, 0x98, 0xe0, 0x07, 0x49, 0x28, 0x36, 0x99, 0xbe, 0x0f, 0x87,
-	0x25, 0x17, 0x3c, 0x63, 0x29, 0x27, 0xe8, 0x03, 0xe8, 0x66, 0x86, 0x0d, 0x07, 0x4b, 0xd3, 0x3f,
-	0x84, 0xfb, 0x17, 0x22, 0xcc, 0x85, 0xa1, 0xcb, 0xff, 0x18, 0x9c, 0x33, 0x12, 0x93, 0x9a, 0xbf,
-	0xdb, 0x47, 0x9e, 0xc2, 0x61, 0x99, 0x62, 0xca, 0x3e, 0x82, 0x01, 0x79, 0x43, 0xc5, 0x6b, 0x2e,
-	0x42, 0x51, 0x70, 0x93, 0x0b, 0x32, 0x74, 0xa1, 0x22, 0xfe, 0x1f, 0x16, 0x0c, 0xce, 0xdf, 0x90,
-	0x59, 0x59, 0x74, 0x9d, 0x2f, 0xab, 0x89, 0xaf, 0xce, 0xdd, 0x7c, 0x75, 0x1b, 0xf8, 0xea, 0x6d,
-	0xf0, 0x35, 0x82, 0x1e, 0xcf, 0xc8, 0x4c, 0x4d, 0x63, 0x30, 0x39, 0x0a, 0xb4, 0x9c, 0x83, 0x52,
-	0xce, 0xc1, 0xd7, 0xe9, 0x12, 0xab, 0x0c, 0xff, 0x0c, 0x6c, 0x1c, 0xd3, 0x84, 0x0a, 0x84, 0xa0,
-	0x27, 0x69, 0xd4, 0x62, 0xc1, 0xca, 0x96, 0xb1, 0x45, 0x98, 0x47, 0x0a, 0x4c, 0x0f, 0x2b, 0x5b,
-	0xc6, 0x38, 0xbb, 0xd2, 0x48, 0x7a, 0x58, 0xd9, 0xfe, 0x29, 0xdc, 0xd7, 0x0d, 0x36, 0x32, 0xfd,
-	0x0a, 0x60, 0x2a, 0x96, 0x8d, 0xb4, 0xca, 0xbe, 0x7f, 0xa5, 0x91, 0x58, 0xa8, 0xab, 0x1c, 0xac,
-	0x1d, 0xd9, 0xdf, 0x82, 0xd0, 0xf9, 0x42, 0xdf, 0xe6, 0x60, 0xe3, 0xf9, 0x0f, 0xc0, 0x39, 0xbf,
-	0x26, 0xa9, 0xe0, 0xe5, 0xe0, 0xf4, 0x20, 0xab, 0xb9, 0xf9, 0x7f, 0x5a, 0xe0, 0x98, 0x80, 0x81,
-	0xf4, 0xbe, 0x9b, 0x60, 0x20, 0x76, 0x6b, 0x88, 0xcf, 0x24, 0xd9, 0x6a, 0xc4, 0x92, 0xec, 0xc3,
-	0xc9, 0xc9, 0x9d, 0x22, 0xd4, 0x33, 0xc7, 0x26, 0x15, 0x7d, 0x01, 0x07, 0x59, 0xce, 0x66, 0x84,
-	0x73, 0xc2, 0xdd, 0x3d, 0x25, 0xde, 0x8f, 0xee, 0x3c, 0x37, 0xd5, 0x59, 0xb8, 0x4e, 0x97, 0x4d,
-	0x4d, 0xc3, 0x82, 0x57, 0x4d, 0x3d, 0x00, 0x07, 0x13, 0x5e, 0x24, 0x55, 0xc0, 0x91, 0xba, 0xa2,
-	0x95, 0x7a, 0x5f, 0xc2, 0xe0, 0x7b, 0x1a, 0xc7, 0xf5, 0xee, 0xdb, 0x9c, 0xce, 0x4b, 0x91, 0x39,
-	0xd8, 0x78, 0xb2, 0xb3, 0x30, 0x8e, 0x55, 0xbb, 0x7d, 0x2c, 0xcd, 0xdb, 0xbd, 0xfa, 0x9f, 0xc0,
-	0x87, 0x2f, 0x62, 0xc6, 0xc9, 0x85, 0x94, 0x5f, 0xe3, 0xd4, 0x26, 0xff, 0xed, 0x43, 0xef, 0x62,
-	0x41, 0x13, 0x14, 0x82, 0xad, 0x97, 0x0d, 0x3d, 0x09, 0xb6, 0xbc, 0xb9, 0xc1, 0xc6, 0xeb, 0xe4,
-	0x7d, 0xb6, 0x53, 0xae, 0x19, 0xe0, 0x77, 0xb0, 0xa7, 0x76, 0x15, 0x3d, 0xde, 0x7a, 0x6a, 0x7d,
-	0x9f, 0xbd, 0xe3, 0x5b, 0xca, 0x3f, 0x97, 0x0f, 0xb9, 0x84, 0xab, 0x97, 0xb8, 0x05, 0xee, 0xc6,
-	0x63, 0xd0, 0x02, 0xf7, 0xc6, 0xab, 0xf0, 0xb3, 0x82, 0x2b, 0x48, 0x3b, 0xdc, 0xfa, 0x82, 0x27,
-	0xbb, 0xa4, 0xd6, 0x74, 0x28, 0x71, 0xb4, 0xd4, 0x5f, 0x17, 0x50, 0x23, 0x1d, 0xaf, 0xc0, 0xd6,
-	0xc2, 0x6a, 0xa1, 0x63, 0x43, 0x7d, 0x8d, 0xd5, 0xbe, 0x85, 0x9e, 0x54, 0x25, 0x1a, 0x6d, 0xad,
-	0xb5, 0x26, 0xdc, 0xc6, 0x4a, 0x18, 0x6c, 0xbd, 0xe6, 0x2d, 0xb8, 0x36, 0xde, 0x02, 0xef, 0xee,
-	0x3f, 0x07, 0x95, 0xf3, 0xb9, 0x25, 0xd1, 0xc9, 0x25, 0x69, 0x41, 0xb7, 0xb6, 0x47, 0x8d, 0xe8,
-	0x7e, 0x92, 0x7d, 0x92, 0x59, 0x6b, 0x9f, 0xd5, 0xc3, 0xef, 0x3d, 0xde, 0x21, 0xd3, 0x8c, 0xf7,
-	0x1b, 0xe8, 0x4e, 0xc5, 0x12, 0x7d, 0xba, 0x7d, 0xb8, 0xd5, 0x8b, 0xda, 0x08, 0xf2, 0x47, 0x80,
-	0x7a, 0x91, 0x51, 0xb0, 0x7d, 0xe1, 0x6e, 0x6e, 0x7c, 0x53, 0xd5, 0xe7, 0xee, 0xdb, 0x77, 0xc3,
-	0x7b, 0x7f, 0xbf, 0x1b, 0xde, 0xfb, 0x6d, 0x35, 0xb4, 0xde, 0xae, 0x86, 0xd6, 0x5f, 0xab, 0xa1,
-	0xf5, 0xef, 0x6a, 0x68, 0x5d, 0xda, 0x2a, 0xf3, 0xd9, 0xff, 0x01, 0x00, 0x00, 0xff, 0xff, 0x55,
-	0x1a, 0x40, 0xbc, 0xb9, 0x09, 0x00, 0x00,
+	// 1126 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x94, 0x56, 0x4f, 0x6f, 0xe3, 0x44,
+	0x14, 0x5f, 0x27, 0x69, 0x36, 0x79, 0xd9, 0x74, 0xdb, 0x51, 0x55, 0x79, 0x53, 0x48, 0x8b, 0xa5,
+	0x15, 0x69, 0x17, 0x1c, 0xe8, 0xde, 0x56, 0x70, 0xe8, 0x3f, 0xc4, 0x42, 0x81, 0x68, 0x5a, 0x4e,
+	0x48, 0x44, 0xae, 0x33, 0x4d, 0x86, 0xda, 0x1e, 0xe3, 0x19, 0x77, 0xdb, 0x1b, 0x1f, 0x81, 0x2b,
+	0x9f, 0x84, 0x3b, 0xa7, 0x1e, 0xb9, 0xc1, 0x69, 0x61, 0xfb, 0x2d, 0xb8, 0xa1, 0xf9, 0x63, 0x27,
+	0x69, 0xeb, 0xa4, 0xbd, 0x58, 0xf3, 0xde, 0xfc, 0xe6, 0xcd, 0xfb, 0xfb, 0x1b, 0xc3, 0xe7, 0x43,
+	0x2a, 0x46, 0xe9, 0x89, 0xeb, 0xb3, 0xb0, 0xeb, 0xb3, 0x48, 0x78, 0x34, 0x22, 0xc9, 0x60, 0x72,
+	0xe9, 0xc5, 0xb4, 0xcb, 0x49, 0x72, 0x4e, 0x7d, 0xc2, 0xbb, 0x7c, 0x44, 0x43, 0xf5, 0x71, 0xe3,
+	0x84, 0x09, 0x86, 0xd6, 0xc6, 0x40, 0xf7, 0xfc, 0x53, 0x37, 0xc3, 0xb9, 0x12, 0xd2, 0x7a, 0x36,
+	0x64, 0x6c, 0x18, 0x90, 0xae, 0x82, 0x9e, 0xa4, 0xa7, 0x5d, 0x2f, 0xba, 0xd4, 0xe7, 0x5a, 0x6b,
+	0x37, 0xb7, 0x48, 0x18, 0x8b, 0x6c, 0x73, 0x65, 0xc8, 0x86, 0x4c, 0x2d, 0xbb, 0x72, 0x65, 0xb4,
+	0x9f, 0xdd, 0xcb, 0x53, 0x71, 0x19, 0x13, 0xde, 0x0d, 0x59, 0x1a, 0x09, 0xfd, 0x35, 0xa7, 0x5f,
+	0x3d, 0xe0, 0xb4, 0xf0, 0xf8, 0x99, 0xfa, 0x98, 0xb3, 0xeb, 0x37, 0x9d, 0x15, 0x34, 0x24, 0x5c,
+	0x78, 0x61, 0xac, 0x01, 0xce, 0x5f, 0x25, 0x68, 0xee, 0x25, 0xc4, 0x13, 0x04, 0x93, 0x9f, 0x53,
+	0xc2, 0x05, 0x5a, 0x85, 0x12, 0x1d, 0xd8, 0xd6, 0x86, 0xd5, 0xa9, 0xef, 0x56, 0xaf, 0xdf, 0xae,
+	0x97, 0x5e, 0xef, 0xe3, 0x12, 0x1d, 0xa0, 0x55, 0xa8, 0x9e, 0xa4, 0xd1, 0x20, 0x20, 0x76, 0x49,
+	0xee, 0x61, 0x23, 0x21, 0x1b, 0x1e, 0x27, 0x69, 0x24, 0xed, 0xda, 0x65, 0xb5, 0x91, 0x89, 0xe8,
+	0x19, 0xd4, 0x22, 0xd6, 0x8f, 0xe9, 0x39, 0x13, 0x76, 0x65, 0xc3, 0xea, 0xd4, 0xf0, 0xe3, 0x88,
+	0xf5, 0xa4, 0x88, 0x5a, 0x50, 0x13, 0x24, 0x09, 0x69, 0xe4, 0x05, 0xf6, 0x82, 0xda, 0xca, 0x65,
+	0xb4, 0x02, 0x0b, 0x5c, 0x0c, 0x68, 0x64, 0x57, 0x95, 0x39, 0x2d, 0xc8, 0xeb, 0xb9, 0x18, 0xb0,
+	0x54, 0xd8, 0x8f, 0xf5, 0xf5, 0x5a, 0x32, 0x7a, 0x92, 0x24, 0x76, 0x2d, 0xd7, 0x93, 0x24, 0x41,
+	0xdb, 0x50, 0x4d, 0x18, 0x13, 0xa7, 0xdc, 0xae, 0x6f, 0x94, 0x3b, 0x8d, 0xed, 0x96, 0x3b, 0x5d,
+	0x6f, 0x95, 0x2f, 0xf7, 0x1b, 0x99, 0x67, 0x6c, 0x90, 0xa8, 0x0d, 0xe0, 0x8f, 0x88, 0x7f, 0x16,
+	0x33, 0x1a, 0x09, 0x1b, 0x94, 0xbd, 0x09, 0x0d, 0x7a, 0x01, 0xcb, 0xb1, 0x97, 0x90, 0x48, 0xf4,
+	0x27, 0x60, 0x0d, 0x05, 0x5b, 0xd2, 0x1b, 0x7b, 0xb9, 0xde, 0x71, 0x60, 0x31, 0x4b, 0x2c, 0x8f,
+	0x59, 0xc4, 0x09, 0x5a, 0x82, 0x72, 0x6c, 0x52, 0xdb, 0xc4, 0x72, 0xe9, 0x2c, 0xc2, 0x93, 0x23,
+	0xe1, 0x25, 0xc2, 0xe4, 0xde, 0xf9, 0x00, 0x9a, 0xfb, 0x24, 0x20, 0xe3, 0x62, 0xdc, 0x3e, 0x22,
+	0x60, 0x31, 0x83, 0x18, 0xb3, 0xeb, 0xd0, 0x20, 0x17, 0x54, 0xf4, 0xb9, 0xf0, 0x44, 0xca, 0x0d,
+	0x16, 0xa4, 0xea, 0x48, 0x69, 0xd0, 0x0e, 0xd4, 0xa5, 0x44, 0x06, 0x7d, 0x4f, 0xa8, 0xe2, 0xc9,
+	0x6c, 0xe8, 0xc6, 0x70, 0xb3, 0xc6, 0x70, 0x8f, 0xb3, 0xc6, 0xd8, 0xad, 0x5d, 0xbd, 0x5d, 0x7f,
+	0xf4, 0xeb, 0x3f, 0xeb, 0x16, 0xae, 0xe9, 0x63, 0x3b, 0xc2, 0xf9, 0xcd, 0x82, 0xc6, 0xc1, 0x05,
+	0xf1, 0x33, 0xbf, 0x26, 0xeb, 0x67, 0x15, 0xd5, 0xaf, 0x74, 0x77, 0xfd, 0xca, 0x05, 0xf5, 0xab,
+	0x4c, 0xd5, 0xaf, 0x03, 0x15, 0x1e, 0x13, 0x5f, 0x75, 0x47, 0x63, 0x7b, 0xe5, 0x96, 0xbf, 0x3b,
+	0xd1, 0x25, 0x56, 0x08, 0x67, 0x1f, 0xaa, 0x38, 0xa0, 0x21, 0x15, 0x08, 0x41, 0x45, 0x96, 0x55,
+	0x37, 0x2f, 0x56, 0x6b, 0xa9, 0x1b, 0x79, 0xc9, 0x40, 0x39, 0x53, 0xc1, 0x6a, 0x2d, 0x75, 0x9c,
+	0x9d, 0x6a, 0x4f, 0x2a, 0x58, 0xad, 0x9d, 0x0d, 0x78, 0xa2, 0x03, 0x2c, 0x2c, 0xd6, 0x21, 0x40,
+	0x4f, 0x5c, 0x16, 0x56, 0x46, 0xc6, 0xfd, 0x86, 0x0e, 0xc4, 0x48, 0x5d, 0xd5, 0xc4, 0x5a, 0x90,
+	0xf1, 0x8d, 0x08, 0x1d, 0x8e, 0xf4, 0x6d, 0x4d, 0x6c, 0x24, 0xe7, 0x29, 0x34, 0x0f, 0xce, 0x49,
+	0x24, 0x78, 0x56, 0x7b, 0xdd, 0x0b, 0x79, 0xe9, 0x9d, 0x3f, 0x2c, 0x68, 0x1a, 0x85, 0x71, 0xe9,
+	0xa1, 0x93, 0x69, 0x5c, 0x2c, 0x8f, 0x5d, 0x7c, 0x29, 0x93, 0xad, 0xba, 0x44, 0x26, 0x7b, 0x71,
+	0x7b, 0xed, 0xce, 0xa1, 0xd0, 0x6d, 0x83, 0x0d, 0x14, 0xbd, 0x82, 0x7a, 0x9c, 0x30, 0x9f, 0x70,
+	0x4e, 0xb8, 0xbd, 0xa0, 0x86, 0xe9, 0xbd, 0x3b, 0xcf, 0xf5, 0x34, 0x0a, 0x8f, 0xe1, 0x32, 0xa8,
+	0x9e, 0x97, 0xf2, 0x3c, 0xa8, 0xa7, 0xd0, 0xc4, 0x84, 0xa7, 0x61, 0xae, 0x68, 0xca, 0xbe, 0xa2,
+	0xf9, 0x00, 0xbc, 0x86, 0xc6, 0xd7, 0x34, 0x08, 0xc6, 0x5c, 0x54, 0xe5, 0x74, 0x98, 0x35, 0x59,
+	0x13, 0x1b, 0x49, 0x46, 0xe6, 0x05, 0x81, 0x0a, 0xb7, 0x86, 0xe5, 0xf2, 0x76, 0xac, 0xce, 0x73,
+	0x58, 0xde, 0x0b, 0x18, 0x27, 0x47, 0xb2, 0xfd, 0x8a, 0xe7, 0x69, 0x0b, 0x96, 0x7a, 0x99, 0xbb,
+	0x73, 0x28, 0xd0, 0xf9, 0x0e, 0x96, 0x27, 0xb0, 0xa6, 0x2a, 0x53, 0xe9, 0xb1, 0x1e, 0x96, 0x9e,
+	0xff, 0x2c, 0x58, 0x1e, 0x53, 0x46, 0x76, 0x3d, 0x82, 0x8a, 0x1c, 0x3c, 0x33, 0x58, 0x6a, 0x8d,
+	0xd6, 0xa0, 0xee, 0x05, 0x01, 0x7b, 0xd3, 0x17, 0x7e, 0x6c, 0xe2, 0xae, 0x29, 0xc5, 0xb1, 0x1f,
+	0xa3, 0x8f, 0x00, 0xe9, 0xcd, 0x34, 0xa2, 0x17, 0x7d, 0xce, 0xfc, 0x33, 0x22, 0xb8, 0xca, 0x45,
+	0x0d, 0x2f, 0xa9, 0x9d, 0xef, 0x23, 0x7a, 0x71, 0xa4, 0xf5, 0xe8, 0x39, 0x2c, 0x1a, 0x53, 0xd9,
+	0x04, 0x6b, 0x72, 0x6e, 0x6a, 0x7b, 0xd9, 0x18, 0xbf, 0x0f, 0x70, 0x4a, 0x03, 0xd2, 0x0f, 0x98,
+	0x7f, 0xc6, 0x0d, 0x49, 0xd7, 0xa5, 0xe6, 0x50, 0x2a, 0xd0, 0x26, 0x2c, 0xa9, 0x87, 0xaf, 0x1f,
+	0x79, 0x21, 0xe1, 0xb1, 0xe7, 0x13, 0x6e, 0x57, 0x37, 0xca, 0x9d, 0x3a, 0x7e, 0xaa, 0xf4, 0xdf,
+	0xe6, 0x6a, 0x39, 0x18, 0x34, 0xf4, 0x86, 0xc4, 0x30, 0xb7, 0x16, 0xb6, 0x7f, 0xaf, 0x43, 0xe5,
+	0x68, 0x44, 0x43, 0xe4, 0x41, 0x55, 0x13, 0x25, 0xda, 0x72, 0x67, 0xbc, 0xc9, 0xee, 0xd4, 0x33,
+	0xd5, 0x7a, 0x71, 0x2f, 0xac, 0xa9, 0xd1, 0x57, 0xb0, 0xa0, 0x78, 0x16, 0x6d, 0xce, 0x3c, 0x35,
+	0xc9, 0xc5, 0xad, 0xd5, 0x5b, 0x94, 0x73, 0x20, 0xe3, 0x92, 0xee, 0x6a, 0x02, 0x9e, 0xe3, 0xee,
+	0x14, 0x91, 0xcf, 0x71, 0xf7, 0x06, 0xa3, 0xff, 0xa8, 0xdc, 0x15, 0x64, 0xbe, 0xbb, 0xe3, 0x0b,
+	0xb6, 0xee, 0x03, 0x35, 0xf6, 0x7f, 0x82, 0x7a, 0xde, 0xc7, 0xe8, 0xe3, 0x99, 0x07, 0x6f, 0xce,
+	0x46, 0xcb, 0xbd, 0x2f, 0x7c, 0x9c, 0x7a, 0xc5, 0x00, 0x73, 0x62, 0x99, 0x64, 0x89, 0xc2, 0xd4,
+	0x1f, 0x42, 0x55, 0xb3, 0xc7, 0x9c, 0xd4, 0x4f, 0x51, 0x4c, 0xa1, 0xb5, 0x63, 0x80, 0xf1, 0xec,
+	0xa1, 0xd9, 0x71, 0xdd, 0x1a, 0xd2, 0x42, 0xab, 0x5f, 0x42, 0x45, 0x12, 0x1a, 0xea, 0xcc, 0xb4,
+	0x37, 0xc1, 0x79, 0x85, 0x96, 0x30, 0x54, 0xf5, 0x0b, 0x31, 0x27, 0xda, 0xa9, 0x67, 0xa4, 0x75,
+	0xf7, 0x7f, 0x8e, 0xc2, 0x7c, 0x62, 0x49, 0xef, 0x24, 0xbf, 0xce, 0xf1, 0x6e, 0x82, 0x82, 0x0b,
+	0xbd, 0xfb, 0x41, 0xc6, 0x49, 0xfc, 0xb9, 0x71, 0xe6, 0xff, 0x0c, 0xad, 0xcd, 0x7b, 0x20, 0x4d,
+	0xd3, 0x7c, 0x01, 0xe5, 0x9e, 0xb8, 0x44, 0x1f, 0xce, 0x6e, 0x99, 0xfc, 0x31, 0x9e, 0x59, 0xe2,
+	0xfc, 0x0d, 0x98, 0x57, 0xe2, 0x9b, 0x8f, 0x45, 0x91, 0xd5, 0x5d, 0xfb, 0xea, 0x5d, 0xfb, 0xd1,
+	0xdf, 0xef, 0xda, 0x8f, 0x7e, 0xb9, 0x6e, 0x5b, 0x57, 0xd7, 0x6d, 0xeb, 0xcf, 0xeb, 0xb6, 0xf5,
+	0xef, 0x75, 0xdb, 0x3a, 0xa9, 0x2a, 0xe4, 0xcb, 0xff, 0x03, 0x00, 0x00, 0xff, 0xff, 0xef, 0xf8,
+	0x34, 0x69, 0x9b, 0x0c, 0x00, 0x00,
 }

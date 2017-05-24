@@ -39,27 +39,27 @@ not use this implementation as a guide. The end goal should be having metadata,
 content and snapshots ready for a direct use via the 'ctr run'.
 
 Most of this is experimental and there are few leaps to make this work.`,
-	Flags: []cli.Flag{},
+	Flags: registryFlags,
 	Action: func(clicontext *cli.Context) error {
 		var (
-			ctx = background
 			ref = clicontext.Args().First()
 		)
+		ctx, cancel := appContext()
+		defer cancel()
 
 		conn, err := connectGRPC(clicontext)
 		if err != nil {
 			return err
 		}
 
-		resolver, err := getResolver(ctx)
+		resolver, err := getResolver(ctx, clicontext)
 		if err != nil {
 			return err
 		}
 
 		ongoing := newJobs()
 
-		ingester := contentservice.NewIngesterFromClient(contentapi.NewContentClient(conn))
-		provider := contentservice.NewProviderFromClient(contentapi.NewContentClient(conn))
+		content := contentservice.NewStoreFromClient(contentapi.NewContentClient(conn))
 
 		// TODO(stevvooe): Need to replace this with content store client.
 		cs, err := resolveContentStore(clicontext)
@@ -84,8 +84,8 @@ Most of this is experimental and there are few leaps to make this work.`,
 					ongoing.add(remotes.MakeRefKey(ctx, desc))
 					return nil, nil
 				}),
-					remotes.FetchHandler(ingester, fetcher),
-					images.ChildrenHandler(provider),
+					remotes.FetchHandler(content, fetcher),
+					images.ChildrenHandler(content),
 				),
 				desc)
 		})
@@ -113,7 +113,7 @@ Most of this is experimental and there are few leaps to make this work.`,
 
 				activeSeen := map[string]struct{}{}
 				if !done {
-					active, err := cs.Active()
+					active, err := cs.Status(ctx, "")
 					if err != nil {
 						log.G(ctx).WithError(err).Error("active check failed")
 						continue
@@ -176,8 +176,6 @@ Most of this is experimental and there are few leaps to make this work.`,
 				done = true // allow ui to update once more
 			}
 		}
-
-		return nil
 	},
 }
 

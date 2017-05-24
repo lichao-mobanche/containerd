@@ -2,21 +2,19 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"text/tabwriter"
 	"time"
 
-	contentapi "github.com/containerd/containerd/api/services/content"
-	rootfsapi "github.com/containerd/containerd/api/services/rootfs"
-	"github.com/containerd/containerd/content"
+	diffapi "github.com/containerd/containerd/api/services/diff"
+	snapshotapi "github.com/containerd/containerd/api/services/snapshot"
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/progress"
 	"github.com/containerd/containerd/remotes"
-	contentservice "github.com/containerd/containerd/services/content"
-	rootfsservice "github.com/containerd/containerd/services/rootfs"
-	"github.com/opencontainers/image-spec/identity"
+	"github.com/containerd/containerd/rootfs"
+	diffservice "github.com/containerd/containerd/services/diff"
+	snapshotservice "github.com/containerd/containerd/services/snapshot"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/urfave/cli"
 	"golang.org/x/sync/errgroup"
@@ -35,14 +33,16 @@ command. As part of this process, we do the following:
 2. Prepare the snapshot filesystem with the pulled resources.
 3. Register metadata for the image.
 `,
-	Flags: []cli.Flag{},
+	Flags: registryFlags,
 	Action: func(clicontext *cli.Context) error {
 		var (
-			ctx = background
 			ref = clicontext.Args().First()
 		)
 
-		conn, err := connectGRPC(clicontext)
+		ctx, cancel := appContext()
+		defer cancel()
+
+		cs, err := resolveContentStore(clicontext)
 		if err != nil {
 			return err
 		}
@@ -52,20 +52,11 @@ command. As part of this process, we do the following:
 			return err
 		}
 
-		resolver, err := getResolver(ctx)
+		resolver, err := getResolver(ctx, clicontext)
 		if err != nil {
 			return err
 		}
 		ongoing := newJobs()
-
-		// TODO(stevvooe): Must unify this type.
-		ingester := contentservice.NewIngesterFromClient(contentapi.NewContentClient(conn))
-		provider := contentservice.NewProviderFromClient(contentapi.NewContentClient(conn))
-
-		cs, err := resolveContentStore(clicontext)
-		if err != nil {
-			return err
-		}
 
 		eg, ctx := errgroup.WithContext(ctx)
 
@@ -75,6 +66,7 @@ command. As part of this process, we do the following:
 			ongoing.add(ref)
 			name, desc, fetcher, err := resolver.Resolve(ctx, ref)
 			if err != nil {
+				log.G(ctx).WithError(err).Error("failed to resolve")
 				return err
 			}
 			log.G(ctx).WithField("image", name).Debug("fetching")
@@ -90,8 +82,8 @@ command. As part of this process, we do the following:
 					ongoing.add(remotes.MakeRefKey(ctx, desc))
 					return nil, nil
 				}),
-					remotes.FetchHandler(ingester, fetcher),
-					images.ChildrenHandler(provider)),
+					remotes.FetchHandler(cs, fetcher),
+					images.ChildrenHandler(cs)),
 				desc)
 
 		})
@@ -103,46 +95,37 @@ command. As part of this process, we do the following:
 		}()
 
 		defer func() {
-			ctx := background
-
+			// we need new ctx here
+			ctx, cancel := appContext()
+			defer cancel()
 			// TODO(stevvooe): This section unpacks the layers and resolves the
 			// root filesystem chainid for the image. For now, we just print
 			// it, but we should keep track of this in the metadata storage.
-
 			image, err := imageStore.Get(ctx, resolvedImageName)
 			if err != nil {
-				log.G(ctx).Fatal(err)
+				log.G(ctx).WithError(err).Fatal("Failed to get image")
 			}
 
-			provider := contentservice.NewProviderFromClient(contentapi.NewContentClient(conn))
+			layers, err := getImageLayers(ctx, image, cs)
+			if err != nil {
+				log.G(ctx).WithError(err).Fatal("Failed to get rootfs layers")
+			}
 
-			p, err := content.ReadBlob(ctx, provider, image.Target.Digest)
+			conn, err := connectGRPC(clicontext)
 			if err != nil {
 				log.G(ctx).Fatal(err)
 			}
-
-			var manifest ocispec.Manifest
-			if err := json.Unmarshal(p, &manifest); err != nil {
-				log.G(ctx).Fatal(err)
-			}
-
-			rootfs := rootfsservice.NewUnpackerFromClient(rootfsapi.NewRootFSClient(conn))
+			snapshotter := snapshotservice.NewSnapshotterFromClient(snapshotapi.NewSnapshotClient(conn))
+			applier := diffservice.NewDiffServiceFromClient(diffapi.NewDiffClient(conn))
 
 			log.G(ctx).Info("unpacking rootfs")
-			chainID, err := rootfs.Unpack(ctx, manifest.Layers)
+
+			chainID, err := rootfs.ApplyLayers(ctx, layers, snapshotter, applier)
 			if err != nil {
 				log.G(ctx).Fatal(err)
 			}
 
-			diffIDs, err := image.RootFS(ctx, provider)
-			if err != nil {
-				log.G(ctx).WithError(err).Fatal("failed resolving rootfs")
-			}
-
-			expectedChainID := identity.ChainID(diffIDs)
-			if expectedChainID != chainID {
-				log.G(ctx).Fatal("rootfs service did not match chainid")
-			}
+			log.G(ctx).Infof("Unpacked chain id: %s", chainID)
 		}()
 
 		var (
@@ -164,7 +147,7 @@ command. As part of this process, we do the following:
 
 				activeSeen := map[string]struct{}{}
 				if !done {
-					active, err := cs.Active()
+					active, err := cs.Status(ctx, "")
 					if err != nil {
 						log.G(ctx).WithError(err).Error("active check failed")
 						continue

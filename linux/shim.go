@@ -22,16 +22,16 @@ import (
 	"github.com/pkg/errors"
 )
 
-func newShim(path string, remote bool) (shim.ShimClient, error) {
+func newShim(shimName string, path string, remote bool) (shim.ShimClient, error) {
 	if !remote {
-		return localShim.Client(path), nil
+		return localShim.Client(path)
 	}
 	socket := filepath.Join(path, "shim.sock")
 	l, err := sys.CreateUnixSocket(socket)
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command("containerd-shim")
+	cmd := exec.Command(shimName)
 	cmd.Dir = path
 	f, err := l.(*net.UnixListener).File()
 	if err != nil {
@@ -51,12 +51,15 @@ func newShim(path string, remote bool) (shim.ShimClient, error) {
 	if err := reaper.Default.Start(cmd); err != nil {
 		return nil, errors.Wrapf(err, "failed to start shim")
 	}
+	if err := sys.SetOOMScore(cmd.Process.Pid, sys.OOMScoreMaxKillable); err != nil {
+		return nil, err
+	}
 	return connectShim(socket)
 }
 
 func loadShim(path string, remote bool) (shim.ShimClient, error) {
 	if !remote {
-		return localShim.Client(path), nil
+		return localShim.Client(path)
 	}
 	socket := filepath.Join(path, "shim.sock")
 	return connectShim(socket)

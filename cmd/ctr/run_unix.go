@@ -3,16 +3,26 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/Sirupsen/logrus"
+	"github.com/containerd/console"
+	containersapi "github.com/containerd/containerd/api/services/containers"
 	"github.com/containerd/containerd/api/services/execution"
+	"github.com/containerd/containerd/api/types/descriptor"
+	"github.com/containerd/containerd/api/types/mount"
+	mountt "github.com/containerd/containerd/mount"
 	protobuf "github.com/gogo/protobuf/types"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
@@ -20,8 +30,8 @@ import (
 )
 
 const (
-	rwm        = "rwm"
-	rootfsPath = "rootfs"
+	rwm               = "rwm"
+	defaultRootfsPath = "rootfs"
 )
 
 var capabilities = []string{
@@ -41,7 +51,7 @@ var capabilities = []string{
 	"CAP_AUDIT_WRITE",
 }
 
-func spec(id string, config *ocispec.ImageConfig, context *cli.Context) (*specs.Spec, error) {
+func spec(id string, config *ocispec.ImageConfig, context *cli.Context, rootfs string) (*specs.Spec, error) {
 	env := []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 	}
@@ -86,14 +96,17 @@ func spec(id string, config *ocispec.ImageConfig, context *cli.Context) (*specs.
 	if cwd == "" {
 		cwd = "/"
 	}
-	return &specs.Spec{
+	if rootfs == "" {
+		rootfs = defaultRootfsPath
+	}
+	s := &specs.Spec{
 		Version: specs.Version,
 		Platform: specs.Platform{
 			OS:   runtime.GOOS,
 			Arch: runtime.GOARCH,
 		},
 		Root: specs.Root{
-			Path:     rootfsPath,
+			Path:     rootfs,
 			Readonly: context.Bool("readonly"),
 		},
 		Process: specs.Process{
@@ -205,15 +218,26 @@ func spec(id string, config *ocispec.ImageConfig, context *cli.Context) (*specs.
 				{
 					Type: "mount",
 				},
-				{
-					Type: "network",
-				},
 			},
 		},
-	}, nil
+	}
+	if !context.Bool("net-host") {
+		s.Linux.Namespaces = append(s.Linux.Namespaces, specs.LinuxNamespace{
+			Type: "network",
+		})
+	}
+	for _, mount := range context.StringSlice("mount") {
+		m, err := parseMountFlag(mount)
+		if err != nil {
+			return nil, err
+		}
+
+		s.Mounts = append(s.Mounts, m)
+	}
+	return s, nil
 }
 
-func customSpec(configPath string) (*specs.Spec, error) {
+func customSpec(configPath string, rootfs string) (*specs.Spec, error) {
 	b, err := ioutil.ReadFile(configPath)
 	if err != nil {
 		return nil, err
@@ -222,43 +246,114 @@ func customSpec(configPath string) (*specs.Spec, error) {
 	if err := json.Unmarshal(b, &s); err != nil {
 		return nil, err
 	}
-	if s.Root.Path != rootfsPath {
-		logrus.Warnf("ignoring Root.Path %q, setting %q forcibly", s.Root.Path, rootfsPath)
-		s.Root.Path = rootfsPath
+	if rootfs == "" {
+		if s.Root.Path != defaultRootfsPath {
+			logrus.Warnf("ignoring Root.Path %q, setting %q forcibly", s.Root.Path, defaultRootfsPath)
+			s.Root.Path = defaultRootfsPath
+		}
+	} else {
+		s.Root.Path = rootfs
 	}
 	return &s, nil
 }
 
-func getConfig(context *cli.Context, imageConfig *ocispec.ImageConfig) (*specs.Spec, error) {
+func getConfig(context *cli.Context, imageConfig *ocispec.ImageConfig, rootfs string) (*specs.Spec, error) {
 	config := context.String("runtime-config")
 	if config == "" {
-		return spec(context.String("id"), imageConfig, context)
+		return spec(context.String("id"), imageConfig, context, rootfs)
 	}
 
-	return customSpec(config)
+	return customSpec(config, rootfs)
 }
 
-func newCreateRequest(context *cli.Context, imageConfig *ocispec.ImageConfig, id, tmpDir string) (*execution.CreateRequest, error) {
-	s, err := getConfig(context, imageConfig)
+func newContainerSpec(context *cli.Context, config *ocispec.ImageConfig, imageRef string) ([]byte, error) {
+	s, err := getConfig(context, config, context.String("rootfs"))
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(s)
-	if err != nil {
-		return nil, err
+	if s.Annotations == nil {
+		s.Annotations = make(map[string]string)
 	}
-	create := &execution.CreateRequest{
-		ID: id,
-		Spec: &protobuf.Any{
-			TypeUrl: specs.Version,
-			Value:   data,
+	s.Annotations["image"] = imageRef
+	return json.Marshal(s)
+}
+
+func newCreateContainerRequest(context *cli.Context, id, snapshot string, spec []byte) (*containersapi.CreateContainerRequest, error) {
+	create := &containersapi.CreateContainerRequest{
+		Container: containersapi.Container{
+			ID: id,
+			Spec: &protobuf.Any{
+				TypeUrl: specs.Version,
+				Value:   spec,
+			},
+			Runtime: context.String("runtime"),
+			RootFS:  snapshot,
 		},
-		Runtime:  context.String("runtime"),
-		Terminal: context.Bool("tty"),
-		Stdin:    filepath.Join(tmpDir, "stdin"),
-		Stdout:   filepath.Join(tmpDir, "stdout"),
-		Stderr:   filepath.Join(tmpDir, "stderr"),
 	}
 
 	return create, nil
+}
+
+func newCreateTaskRequest(context *cli.Context, id, tmpDir string, checkpoint *ocispec.Descriptor, mounts []mountt.Mount) (*execution.CreateRequest, error) {
+	create := &execution.CreateRequest{
+		ContainerID: id,
+		Terminal:    context.Bool("tty"),
+		Stdin:       filepath.Join(tmpDir, "stdin"),
+		Stdout:      filepath.Join(tmpDir, "stdout"),
+		Stderr:      filepath.Join(tmpDir, "stderr"),
+	}
+
+	for _, m := range mounts {
+		create.Rootfs = append(create.Rootfs, &mount.Mount{
+			Type:    m.Type,
+			Source:  m.Source,
+			Options: m.Options,
+		})
+	}
+
+	if checkpoint != nil {
+		create.Checkpoint = &descriptor.Descriptor{
+			MediaType: checkpoint.MediaType,
+			Size_:     checkpoint.Size,
+			Digest:    checkpoint.Digest,
+		}
+	}
+
+	return create, nil
+}
+
+func handleConsoleResize(ctx context.Context, service execution.TasksClient, id string, pid uint32, con console.Console) error {
+	// do an initial resize of the console
+	size, err := con.Size()
+	if err != nil {
+		return err
+	}
+	if _, err := service.Pty(ctx, &execution.PtyRequest{
+		ContainerID: id,
+		Pid:         pid,
+		Width:       uint32(size.Width),
+		Height:      uint32(size.Height),
+	}); err != nil {
+		return err
+	}
+	s := make(chan os.Signal, 16)
+	signal.Notify(s, unix.SIGWINCH)
+	go func() {
+		for range s {
+			size, err := con.Size()
+			if err != nil {
+				logrus.WithError(err).Error("get pty size")
+				continue
+			}
+			if _, err := service.Pty(ctx, &execution.PtyRequest{
+				ContainerID: id,
+				Pid:         pid,
+				Width:       uint32(size.Width),
+				Height:      uint32(size.Height),
+			}); err != nil {
+				logrus.WithError(err).Error("resize pty")
+			}
+		}
+	}()
+	return nil
 }

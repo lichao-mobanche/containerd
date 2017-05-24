@@ -1,12 +1,13 @@
-// +build linux
+// +build !windows
 
 package shim
 
 import (
 	"context"
 	"io"
+	"time"
 
-	"github.com/crosbymichael/console"
+	"github.com/containerd/console"
 )
 
 type process interface {
@@ -18,6 +19,8 @@ type process interface {
 	Exited(status int)
 	// Status returns the exit status
 	Status() int
+	// ExitedAt is the time the process exited
+	ExitedAt() time.Time
 	// Delete deletes the process and its resourcess
 	Delete(context.Context) error
 	// Signal directly signals the process

@@ -6,7 +6,8 @@ import "google/protobuf/any.proto";
 import "google/protobuf/empty.proto";
 import "gogoproto/gogo.proto";
 import "github.com/containerd/containerd/api/types/mount/mount.proto";
-import "github.com/containerd/containerd/api/types/container/container.proto";
+import "github.com/containerd/containerd/api/types/task/task.proto";
+import "google/protobuf/timestamp.proto";
 
 // Shim service is launched for each container and is responsible for owning the IO
 // for the container and its additional processes.  The shim is also the parent of
@@ -17,8 +18,10 @@ service Shim {
 	rpc Start(StartRequest) returns (google.protobuf.Empty);
 	rpc Delete(DeleteRequest) returns (DeleteResponse);
 	rpc State(StateRequest) returns (StateResponse);
+	rpc Processes(ProcessesRequest) returns (ProcessesResponse);
 	rpc Pause(PauseRequest) returns (google.protobuf.Empty);
 	rpc Resume(ResumeRequest) returns (google.protobuf.Empty);
+	rpc Checkpoint(CheckpointRequest) returns (google.protobuf.Empty);
 
 	rpc Exit(ExitRequest) returns (google.protobuf.Empty);
 	rpc Events(EventsRequest) returns (stream containerd.v1.types.Event);
@@ -29,7 +32,7 @@ service Shim {
 }
 
 message CreateRequest {
-	string id = 1 [(gogoproto.customname) = "ID"];
+	string id = 1;
 	string bundle = 2;
 	string runtime = 3;
 	bool no_pivot = 4;
@@ -38,6 +41,8 @@ message CreateRequest {
 	string stdout = 7;
 	string stderr = 8;
 	repeated containerd.v1.types.Mount rootfs = 9;
+	string checkpoint = 10;
+	string parent_checkpoint = 11;
 }
 
 message CreateResponse {
@@ -53,6 +58,7 @@ message DeleteRequest {
 
 message DeleteResponse {
 	uint32 exit_status = 1;
+	google.protobuf.Timestamp exited_at = 2 [(gogoproto.stdtime) = true, (gogoproto.nullable) = false];
 }
 
 message ExecRequest {
@@ -86,7 +92,7 @@ message StateRequest {
 }
 
 message StateResponse {
-	string id = 1 [(gogoproto.customname) = "ID"];
+	string id = 1;
 	string bundle = 2;
 	uint32 pid = 3;
 	containerd.v1.types.Status status = 4;
@@ -110,4 +116,22 @@ message KillRequest {
 
 message CloseStdinRequest {
 	uint32 pid = 1;
+}
+
+message ProcessesRequest {
+	string id = 1;
+}
+
+message ProcessesResponse{
+	repeated containerd.v1.types.Process processes = 1;
+}
+
+message CheckpointRequest {
+	bool exit = 1;
+	bool allow_tcp = 2;
+	bool allow_unix_sockets = 3;
+	bool allow_terminal = 4;
+	bool file_locks = 5;
+	repeated string empty_namespaces = 6;
+	string image = 7;
 }

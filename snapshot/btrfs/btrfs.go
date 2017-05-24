@@ -7,51 +7,68 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/containerd/containerd"
+	"github.com/containerd/btrfs"
 	"github.com/containerd/containerd/log"
+	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/plugin"
 	"github.com/containerd/containerd/snapshot"
 	"github.com/containerd/containerd/snapshot/storage"
 	"github.com/pkg/errors"
-	"github.com/stevvooe/go-btrfs"
 )
-
-type btrfsConfig struct {
-	Device string `toml:"device"`
-}
 
 func init() {
 	plugin.Register("snapshot-btrfs", &plugin.Registration{
-		Type:   plugin.SnapshotPlugin,
-		Config: &btrfsConfig{},
+		Type: plugin.SnapshotPlugin,
 		Init: func(ic *plugin.InitContext) (interface{}, error) {
 			root := filepath.Join(ic.Root, "snapshot", "btrfs")
-			conf := ic.Config.(*btrfsConfig)
-			if conf.Device == "" {
-				// TODO: check device for root
-				return nil, errors.Errorf("btrfs requires \"device\" configuration")
-			}
-			return NewSnapshotter(conf.Device, root)
+			return NewSnapshotter(root)
 		},
 	})
 }
 
 type snapshotter struct {
-	device string // maybe we can resolve it with path?
+	device string // device of the root
 	root   string // root provides paths for internal storage.
 	ms     *storage.MetaStore
 }
 
+func getBtrfsDevice(root string, mounts []mount.Info) (string, error) {
+	device := ""
+	deviceMountpoint := ""
+	for _, info := range mounts {
+		if (info.Root == "/" || info.Root == "") && strings.HasPrefix(root, info.Mountpoint) {
+			if info.FSType == "btrfs" && len(info.Mountpoint) > len(deviceMountpoint) {
+				device = info.Source
+				deviceMountpoint = info.Mountpoint
+			}
+			if root == info.Mountpoint && info.FSType != "btrfs" {
+				return "", fmt.Errorf("%s needs to be btrfs, but seems %s", root, info.FSType)
+			}
+		}
+	}
+	if device == "" {
+		// TODO: automatically mount loopback device here?
+		return "", fmt.Errorf("%s is not mounted as btrfs", root)
+	}
+	return device, nil
+}
+
 // NewSnapshotter returns a Snapshotter using btrfs. Uses the provided
-// device and root directory for snapshots and stores the metadata in
+// root directory for snapshots and stores the metadata in
 // a file in the provided root.
-func NewSnapshotter(device, root string) (snapshot.Snapshotter, error) {
-	if err := os.MkdirAll(root, 0700); err != nil {
+// root needs to be a mount point of btrfs.
+func NewSnapshotter(root string) (snapshot.Snapshotter, error) {
+	mounts, err := mount.Self()
+	if err != nil {
 		return nil, err
 	}
-
+	device, err := getBtrfsDevice(root, mounts)
+	if err != nil {
+		return nil, err
+	}
 	var (
 		active    = filepath.Join(root, "active")
 		snapshots = filepath.Join(root, "snapshots")
@@ -88,7 +105,28 @@ func (b *snapshotter) Stat(ctx context.Context, key string) (snapshot.Info, erro
 		return snapshot.Info{}, err
 	}
 	defer t.Rollback()
-	return storage.GetInfo(ctx, key)
+	_, info, _, err := storage.GetInfo(ctx, key)
+	if err != nil {
+		return snapshot.Info{}, err
+	}
+
+	return info, nil
+}
+
+// Usage retrieves the disk usage of the top-level snapshot.
+func (b *snapshotter) Usage(ctx context.Context, key string) (snapshot.Usage, error) {
+	panic("not implemented")
+
+	// TODO(stevvooe): Btrfs has a quota model where data can be exclusive to a
+	// snapshot or shared among other resources. We may find that this is the
+	// correct value to reoprt but the stability of the implementation is under
+	// question.
+	//
+	// In general, this has impact on the model we choose for reporting usage.
+	// Ideally, the value should allow aggregration. For overlay, this is
+	// simple since we can scan the diff directory to get a unique value. This
+	// breaks down when start looking the behavior when data is shared between
+	// snapshots, such as that for btrfs.
 }
 
 // Walk the committed snapshots.
@@ -101,15 +139,15 @@ func (b *snapshotter) Walk(ctx context.Context, fn func(context.Context, snapsho
 	return storage.WalkInfo(ctx, fn)
 }
 
-func (b *snapshotter) Prepare(ctx context.Context, key, parent string) ([]containerd.Mount, error) {
+func (b *snapshotter) Prepare(ctx context.Context, key, parent string) ([]mount.Mount, error) {
 	return b.makeActive(ctx, key, parent, false)
 }
 
-func (b *snapshotter) View(ctx context.Context, key, parent string) ([]containerd.Mount, error) {
+func (b *snapshotter) View(ctx context.Context, key, parent string) ([]mount.Mount, error) {
 	return b.makeActive(ctx, key, parent, true)
 }
 
-func (b *snapshotter) makeActive(ctx context.Context, key, parent string, readonly bool) ([]containerd.Mount, error) {
+func (b *snapshotter) makeActive(ctx context.Context, key, parent string, readonly bool) ([]mount.Mount, error) {
 	ctx, t, err := b.ms.TransactionContext(ctx, true)
 	if err != nil {
 		return nil, err
@@ -154,7 +192,7 @@ func (b *snapshotter) makeActive(ctx context.Context, key, parent string, readon
 	return b.mounts(target)
 }
 
-func (b *snapshotter) mounts(dir string) ([]containerd.Mount, error) {
+func (b *snapshotter) mounts(dir string) ([]mount.Mount, error) {
 	var options []string
 
 	// get the subvolume id back out for the mount
@@ -169,10 +207,10 @@ func (b *snapshotter) mounts(dir string) ([]containerd.Mount, error) {
 		options = append(options, "ro")
 	}
 
-	return []containerd.Mount{
+	return []mount.Mount{
 		{
 			Type:   "btrfs",
-			Source: b.device, // device?
+			Source: b.device,
 			// NOTE(stevvooe): While it would be nice to use to uuids for
 			// mounts, they don't work reliably if the uuids are missing.
 			Options: options,
@@ -193,7 +231,7 @@ func (b *snapshotter) Commit(ctx context.Context, name, key string) (err error) 
 		}
 	}()
 
-	id, err := storage.CommitActive(ctx, key, name)
+	id, err := storage.CommitActive(ctx, key, name, snapshot.Usage{}) // TODO(stevvooe): Resolve a usage value for btrfs
 	if err != nil {
 		return errors.Wrap(err, "failed to commit")
 	}
@@ -226,7 +264,7 @@ func (b *snapshotter) Commit(ctx context.Context, name, key string) (err error) 
 // called on an read-write or readonly transaction.
 //
 // This can be used to recover mounts after calling View or Prepare.
-func (b *snapshotter) Mounts(ctx context.Context, key string) ([]containerd.Mount, error) {
+func (b *snapshotter) Mounts(ctx context.Context, key string) ([]mount.Mount, error) {
 	ctx, t, err := b.ms.TransactionContext(ctx, false)
 	if err != nil {
 		return nil, err

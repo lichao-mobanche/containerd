@@ -1,4 +1,4 @@
-// +build !windows
+// +build darwin freebsd
 
 package main
 
@@ -9,7 +9,6 @@ import (
 
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/reaper"
-	"github.com/containerd/containerd/sys"
 	"github.com/urfave/cli"
 	"google.golang.org/grpc"
 )
@@ -23,11 +22,11 @@ var (
 )
 
 func platformInit(context *cli.Context) error {
-	if conf.Subreaper {
-		log.G(global).Info("setting subreaper...")
-		if err := sys.SetSubreaper(1); err != nil {
-			return err
-		}
+	if err := os.MkdirAll(conf.State, 0750); err != nil {
+		return err
+	}
+	if err := os.Chown(conf.State, conf.GRPC.Uid, conf.GRPC.Gid); err != nil {
+		return err
 	}
 	return nil
 }

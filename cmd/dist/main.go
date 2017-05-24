@@ -4,27 +4,36 @@ import (
 	contextpkg "context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/containerd/containerd"
+	"github.com/containerd/containerd/version"
 	"github.com/urfave/cli"
 )
 
 var (
-	background = contextpkg.Background()
+	timeout time.Duration
 )
 
 func init() {
 	cli.VersionPrinter = func(c *cli.Context) {
-		fmt.Println(c.App.Name, containerd.Package, c.App.Version)
+		fmt.Println(c.App.Name, version.Package, c.App.Version)
 	}
 
+}
+
+func appContext() (contextpkg.Context, contextpkg.CancelFunc) {
+	background := contextpkg.Background()
+	if timeout > 0 {
+		return contextpkg.WithTimeout(background, timeout)
+	}
+	return contextpkg.WithCancel(background)
 }
 
 func main() {
 	app := cli.NewApp()
 	app.Name = "dist"
-	app.Version = containerd.Version
+	app.Version = version.Version
 	app.Usage = `
         ___      __
    ____/ (_)____/ /_
@@ -61,30 +70,18 @@ distribution tool
 		},
 	}
 	app.Commands = []cli.Command{
-		imagesCommand,
-		rmiCommand,
+		imageCommand,
+		contentCommand,
 		pullCommand,
 		fetchCommand,
 		fetchObjectCommand,
-		ingestCommand,
-		activeCommand,
-		getCommand,
-		deleteCommand,
-		listCommand,
 		applyCommand,
 		rootfsCommand,
 	}
 	app.Before = func(context *cli.Context) error {
-		var (
-			debug   = context.GlobalBool("debug")
-			timeout = context.GlobalDuration("timeout")
-		)
-		if debug {
+		timeout = context.GlobalDuration("timeout")
+		if context.GlobalBool("debug") {
 			logrus.SetLevel(logrus.DebugLevel)
-		}
-
-		if timeout > 0 {
-			background, _ = contextpkg.WithTimeout(background, timeout)
 		}
 		return nil
 	}
@@ -92,4 +89,26 @@ distribution tool
 		fmt.Fprintf(os.Stderr, "dist: %s\n", err)
 		os.Exit(1)
 	}
+}
+
+var imageCommand = cli.Command{
+	Name:  "image",
+	Usage: "image management",
+	Subcommands: cli.Commands{
+		imagesListCommand,
+		rmiCommand,
+	},
+}
+
+var contentCommand = cli.Command{
+	Name:  "content",
+	Usage: "content management",
+	Subcommands: cli.Commands{
+		listCommand,
+		ingestCommand,
+		activeCommand,
+		getCommand,
+		editCommand,
+		deleteCommand,
+	},
 }

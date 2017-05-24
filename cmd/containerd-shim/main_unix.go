@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/signal"
 	"strings"
 
 	"golang.org/x/sys/unix"
@@ -14,12 +13,10 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/containerd/containerd"
 	shimapi "github.com/containerd/containerd/api/services/shim"
 	"github.com/containerd/containerd/linux/shim"
 	"github.com/containerd/containerd/reaper"
-	"github.com/containerd/containerd/sys"
-	runc "github.com/crosbymichael/go-runc"
+	"github.com/containerd/containerd/version"
 	"github.com/urfave/cli"
 )
 
@@ -36,7 +33,7 @@ shim for container lifecycle and reconnection
 func main() {
 	app := cli.NewApp()
 	app.Name = "containerd-shim"
-	app.Version = containerd.Version
+	app.Version = version.Version
 	app.Usage = usage
 	app.Flags = []cli.Flag{
 		cli.BoolFlag{
@@ -81,21 +78,6 @@ func main() {
 	}
 }
 
-// setupSignals creates a new signal handler for all signals and sets the shim as a
-// sub-reaper so that the container processes are reparented
-func setupSignals() (chan os.Signal, error) {
-	signals := make(chan os.Signal, 2048)
-	signal.Notify(signals)
-	// make sure runc is setup to use the monitor
-	// for waiting on processes
-	runc.Monitor = reaper.Default
-	// set the shim as the subreaper for all orphaned processes created by the container
-	if err := sys.SetSubreaper(1); err != nil {
-		return nil, err
-	}
-	return signals, nil
-}
-
 // serve serves the grpc API over a unix socket at the provided path
 // this function does not block
 func serve(server *grpc.Server, path string) error {
@@ -130,9 +112,4 @@ func handleSignals(signals chan os.Signal, server *grpc.Server) error {
 		}
 	}
 	return nil
-}
-
-// setupRoot sets up the root as the shim is started in its own mount namespace
-func setupRoot() error {
-	return unix.Mount("", "/", "", unix.MS_SLAVE|unix.MS_REC, "")
 }

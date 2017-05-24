@@ -1,4 +1,4 @@
-// +build !windows
+// +build darwin freebsd
 
 package main
 
@@ -13,6 +13,6 @@ func defaultConfig() *config {
 			Level:   "info",
 			Address: "/run/containerd/debug.sock",
 		},
-		Snapshotter: "overlay",
+		Snapshotter: "naive",
 	}
 }

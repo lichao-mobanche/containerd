@@ -14,19 +14,23 @@ import (
 	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	gocontext "golang.org/x/net/context"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/containerd/containerd"
+	containersapi "github.com/containerd/containerd/api/services/containers"
 	contentapi "github.com/containerd/containerd/api/services/content"
+	diffapi "github.com/containerd/containerd/api/services/diff"
 	api "github.com/containerd/containerd/api/services/execution"
 	imagesapi "github.com/containerd/containerd/api/services/images"
-	rootfsapi "github.com/containerd/containerd/api/services/rootfs"
+	snapshotapi "github.com/containerd/containerd/api/services/snapshot"
+	versionapi "github.com/containerd/containerd/api/services/version"
 	"github.com/containerd/containerd/content"
 	"github.com/containerd/containerd/images"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/plugin"
 	"github.com/containerd/containerd/snapshot"
 	"github.com/containerd/containerd/sys"
+	"github.com/containerd/containerd/version"
 	metrics "github.com/docker/go-metrics"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
@@ -49,19 +53,19 @@ var (
 
 func init() {
 	cli.VersionPrinter = func(c *cli.Context) {
-		fmt.Println(c.App.Name, containerd.Package, c.App.Version)
+		fmt.Println(c.App.Name, version.Package, c.App.Version)
 	}
 }
 
 func main() {
 	app := cli.NewApp()
 	app.Name = "containerd"
-	app.Version = containerd.Version
+	app.Version = version.Version
 	app.Usage = usage
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:  "config,c",
-			Usage: "path to the configuration file (Use 'default' to output the default toml)",
+			Usage: "path to the configuration file",
 			Value: defaultConfigPath,
 		},
 		cli.StringFlag{
@@ -241,7 +245,7 @@ func serveDebugAPI() error {
 	return nil
 }
 
-func resolveContentStore() (*content.Store, error) {
+func resolveContentStore() (content.Store, error) {
 	cp := filepath.Join(conf.Root, "content")
 	return content.NewStore(cp)
 }
@@ -262,8 +266,8 @@ func resolveMetaDB(ctx *cli.Context) (*bolt.DB, error) {
 	return db, nil
 }
 
-func loadRuntimes(monitor plugin.ContainerMonitor) (map[string]containerd.Runtime, error) {
-	o := make(map[string]containerd.Runtime)
+func loadRuntimes(monitor plugin.TaskMonitor) (map[string]plugin.Runtime, error) {
+	o := make(map[string]plugin.Runtime)
 	for name, rr := range plugin.Registrations() {
 		if rr.Type != plugin.RuntimePlugin {
 			continue
@@ -285,15 +289,15 @@ func loadRuntimes(monitor plugin.ContainerMonitor) (map[string]containerd.Runtim
 		if err != nil {
 			return nil, err
 		}
-		o[name] = vr.(containerd.Runtime)
+		o[name] = vr.(plugin.Runtime)
 	}
 	return o, nil
 }
 
-func loadMonitor() (plugin.ContainerMonitor, error) {
-	var monitors []plugin.ContainerMonitor
+func loadMonitor() (plugin.TaskMonitor, error) {
+	var monitors []plugin.TaskMonitor
 	for name, m := range plugin.Registrations() {
-		if m.Type != plugin.ContainerMonitorPlugin {
+		if m.Type != plugin.TaskMonitorPlugin {
 			continue
 		}
 		log.G(global).Infof("loading monitor plugin %q...", name)
@@ -306,15 +310,15 @@ func loadMonitor() (plugin.ContainerMonitor, error) {
 		if err != nil {
 			return nil, err
 		}
-		monitors = append(monitors, mm.(plugin.ContainerMonitor))
+		monitors = append(monitors, mm.(plugin.TaskMonitor))
 	}
 	if len(monitors) == 0 {
 		return plugin.NewNoopMonitor(), nil
 	}
-	return plugin.NewMultiContainerMonitor(monitors...), nil
+	return plugin.NewMultiTaskMonitor(monitors...), nil
 }
 
-func loadSnapshotter(store *content.Store) (snapshot.Snapshotter, error) {
+func loadSnapshotter(store content.Store) (snapshot.Snapshotter, error) {
 	for name, sr := range plugin.Registrations() {
 		if sr.Type != plugin.SnapshotPlugin {
 			continue
@@ -355,7 +359,7 @@ func newGRPCServer() *grpc.Server {
 	return s
 }
 
-func loadServices(runtimes map[string]containerd.Runtime, store *content.Store, sn snapshot.Snapshotter, meta *bolt.DB) ([]plugin.Service, error) {
+func loadServices(runtimes map[string]plugin.Runtime, store content.Store, sn snapshot.Snapshotter, meta *bolt.DB) ([]plugin.Service, error) {
 	var o []plugin.Service
 	for name, sr := range plugin.Registrations() {
 		if sr.Type != plugin.GRPCPlugin {
@@ -411,16 +415,24 @@ func interceptor(ctx gocontext.Context,
 ) (interface{}, error) {
 	ctx = log.WithModule(ctx, "containerd")
 	switch info.Server.(type) {
-	case api.ContainerServiceServer:
+	case api.TasksServer:
 		ctx = log.WithModule(ctx, "execution")
+	case containersapi.ContainersServer:
+		ctx = log.WithModule(ctx, "containers")
 	case contentapi.ContentServer:
 		ctx = log.WithModule(ctx, "content")
-	case rootfsapi.RootFSServer:
-		ctx = log.WithModule(ctx, "rootfs")
 	case imagesapi.ImagesServer:
 		ctx = log.WithModule(ctx, "images")
+	case grpc_health_v1.HealthServer:
+		// No need to change the context
+	case versionapi.VersionServer:
+		ctx = log.WithModule(ctx, "version")
+	case snapshotapi.SnapshotServer:
+		ctx = log.WithModule(ctx, "snapshot")
+	case diffapi.DiffServer:
+		ctx = log.WithModule(ctx, "diff")
 	default:
-		fmt.Printf("unknown GRPC server type: %#v\n", info.Server)
+		log.G(ctx).Warnf("unknown GRPC server type: %#v\n", info.Server)
 	}
 	return grpc_prometheus.UnaryServerInterceptor(ctx, req, info, handler)
 }
